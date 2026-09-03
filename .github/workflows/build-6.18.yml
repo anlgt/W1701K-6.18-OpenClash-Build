@@ -131,6 +131,8 @@ jobs:
           fi
           grep -Fq 'FEATURES:=dt squashfs nand separate_ramdisk gpio' \
             target/linux/airoha/Makefile
+          grep -Fq 'DEVICE_DTS := an7581-w1701k' \
+            target/linux/airoha/image/an7581.mk
           grep -Fq 'with-initrd | pad-to 128k' \
             target/linux/airoha/image/an7581.mk
           grep -Fq 'KERNEL_SIZE := 16384k' \

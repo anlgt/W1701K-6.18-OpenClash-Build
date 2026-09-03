@@ -15,12 +15,13 @@ diff --git a/target/linux/airoha/image/an7581.mk b/target/linux/airoha/image/an7
 index 9cae328638..51e3496f92 100644
 --- a/target/linux/airoha/image/an7581.mk
 +++ b/target/linux/airoha/image/an7581.mk
-@@ -191,6 +191,8 @@ TARGET_DEVICES += nokia_xg-040g-md-ubi
+@@ -191,6 +191,9 @@ TARGET_DEVICES += nokia_xg-040g-md-ubi
  
  define Device/gemtek_w1701k
    $(call Device/FitImageLzma)
++  DEVICE_DTS := an7581-w1701k
 +  KERNEL_INITRAMFS := kernel-bin | lzma | \
-+	fit lzma $$(KDIR)/image-$$(DEVICE_DTS).dtb with-initrd | pad-to 128k
++	fit lzma $$(KDIR)/image-$$(firstword $$(DEVICE_DTS)).dtb with-initrd | pad-to 128k
    DEVICE_VENDOR := Gemtek
    DEVICE_MODEL := W1701K
    DEVICE_ALT0_VENDOR := Quantum Fiber
