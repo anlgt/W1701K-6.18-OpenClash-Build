@@ -1,0 +1,182 @@
+#!/bin/sh
+
+fail=0
+
+section() {
+	printf '\n== %s ==\n' "$1"
+}
+
+section "Board"
+board_json=$(ubus call system board 2>/dev/null) || board_json=
+printf '%s\n' "$board_json"
+board_name=$(jsonfilter -s "$board_json" -e '@.board_name' 2>/dev/null)
+rootfs_type=$(jsonfilter -s "$board_json" -e '@.rootfs_type' 2>/dev/null)
+[ -n "$board_name" ] || board_name=$(cat /tmp/sysinfo/board_name 2>/dev/null)
+if [ "$board_name" != "gemtek,w1701k" ]; then
+	echo "FAIL: expected gemtek,w1701k, found ${board_name:-unknown}"
+	fail=1
+fi
+if [ "$rootfs_type" != "initramfs" ]; then
+	echo "FAIL: this acceptance test must run from initramfs, found ${rootfs_type:-unknown}"
+	fail=1
+fi
+
+section "PCIe devices"
+if command -v lspci >/dev/null 2>&1; then
+	pci_devices=$(lspci -Dn 2>/dev/null)
+	printf '%s\n' "$pci_devices"
+	if ! printf '%s\n' "$pci_devices" | grep -Eq '(^|[[:space:]])14c3:7990([[:space:]]|$)'; then
+		echo "FAIL: MediaTek [14c3:7990] primary Wi-Fi endpoint was not found"
+		fail=1
+	fi
+	if ! printf '%s\n' "$pci_devices" | grep -Eq '(^|[[:space:]])14c3:7991([[:space:]]|$)'; then
+		echo "FAIL: MediaTek [14c3:7991] HIF endpoint was not found"
+		fail=1
+	fi
+else
+	echo "FAIL: lspci is unavailable"
+	fail=1
+fi
+
+section "Wi-Fi PHY"
+tri_band_phy=
+for phy_dir in /sys/class/ieee80211/phy*; do
+	[ -d "$phy_dir" ] || continue
+	driver=$(basename "$(readlink -f "$phy_dir/device/driver" 2>/dev/null)" 2>/dev/null)
+	[ "$driver" = "mt7996e" ] || continue
+	phy_name=$(basename "$phy_dir")
+	phy_info=$(iw phy "$phy_name" info 2>/dev/null) || continue
+	printf '%s: driver=%s\n' "$phy_name" "$driver"
+	band_flags=$(printf '%s' "$phy_info" | awk '
+		/\* [0-9]+([.][0-9]+)? MHz / {
+			f = $2 + 0
+			if (f >= 2400 && f < 2500) b24 = 1
+			if (f >= 5000 && f < 5925) b5 = 1
+			if (f >= 5925 && f <= 7125) b6 = 1
+		}
+		END { printf "%d %d %d", b24, b5, b6 }
+	')
+	set -- $band_flags
+	printf '%s frequency ranges: 2.4GHz=%s 5GHz=%s 6GHz=%s\n' \
+		"$phy_name" "${1:-0}" "${2:-0}" "${3:-0}"
+	if [ "${1:-0}" = 1 ] && [ "${2:-0}" = 1 ] && [ "${3:-0}" = 1 ] && \
+		printf '%s' "$phy_info" | grep -q 'EHT'; then
+		tri_band_phy="$phy_name"
+		break
+	fi
+done
+if [ -z "$tri_band_phy" ]; then
+	echo "FAIL: no single mt7996e PHY exposes 2.4/5/6 GHz plus Wi-Fi 7 EHT"
+	fail=1
+fi
+
+section "Network links"
+ip -brief link 2>/dev/null || ip link
+if [ ! -e /sys/class/net/wan ]; then
+	echo "FAIL: WAN interface is missing"
+	fail=1
+fi
+if [ ! -e /sys/class/net/lan ] && [ ! -e /sys/class/net/lan1 ]; then
+	echo "FAIL: LAN interface is missing"
+	fail=1
+fi
+
+section "Airoha NPU/PPE"
+if [ ! -d /sys/kernel/debug/ppe ] && ! grep -q ' /sys/kernel/debug debugfs ' /proc/mounts; then
+	mount -t debugfs debugfs /sys/kernel/debug 2>/dev/null || true
+fi
+npu_bound=0
+for npu_device in /sys/bus/platform/drivers/airoha-npu/*.npu; do
+	[ -e "$npu_device" ] || continue
+	npu_bound=1
+	printf 'NPU device: %s\n' "$(basename "$npu_device")"
+done
+if [ "$npu_bound" -eq 1 ]; then
+	echo "PASS: Airoha NPU platform driver is bound"
+else
+	echo "FAIL: Airoha NPU platform driver is not bound"
+	fail=1
+fi
+if [ -d /sys/kernel/debug/ppe ] && [ -e /sys/kernel/debug/ppe/bind ]; then
+	echo "PASS: PPE debug interface is present"
+else
+	echo "FAIL: PPE debug interface is absent"
+	fail=1
+fi
+
+section "Temperature and fan sensors"
+found_nct=0
+for hwmon in /sys/class/hwmon/hwmon*; do
+	[ -r "$hwmon/name" ] || continue
+	name=$(cat "$hwmon/name" 2>/dev/null)
+	printf '%s: %s\n' "$hwmon" "$name"
+	if [ "$name" = "nct7802" ]; then
+		found_nct=1
+		for sensor in temp1_input fan1_input pwm1 pwm1_enable; do
+			if [ ! -r "$hwmon/$sensor" ]; then
+				echo "FAIL: NCT7802 $sensor is not readable"
+				fail=1
+			fi
+		done
+		board_temp=$(cat "$hwmon/temp1_input" 2>/dev/null)
+		fan_rpm=$(cat "$hwmon/fan1_input" 2>/dev/null)
+		fan_pwm=$(cat "$hwmon/pwm1" 2>/dev/null)
+		fan_mode=$(cat "$hwmon/pwm1_enable" 2>/dev/null)
+		printf '  board temp: %s millidegree C\n' "${board_temp:-unknown}"
+		printf '  fan speed: %s RPM\n' "${fan_rpm:-unknown}"
+		printf '  fan PWM: %s/255, mode=%s\n' "${fan_pwm:-unknown}" "${fan_mode:-unknown}"
+		case "$board_temp" in
+			''|*[!0-9-]*) echo "FAIL: invalid NCT7802 temperature"; fail=1 ;;
+			*) [ "$board_temp" -ge 0 ] && [ "$board_temp" -le 120000 ] || {
+				echo "FAIL: implausible NCT7802 temperature"
+				fail=1
+			} ;;
+		esac
+		case "$fan_pwm" in
+			''|*[!0-9]*) echo "FAIL: invalid NCT7802 PWM value"; fail=1 ;;
+			*) [ "$fan_pwm" -le 255 ] || { echo "FAIL: invalid NCT7802 PWM value"; fail=1; } ;;
+		esac
+		case "$fan_mode" in
+			0|1|2|3) ;;
+			*) echo "FAIL: invalid NCT7802 PWM mode"; fail=1 ;;
+		esac
+		case "$fan_rpm" in
+			''|*[!0-9]*) echo "FAIL: invalid NCT7802 fan RPM"; fail=1 ;;
+			0) echo "FAIL: fan reports 0 RPM; verify cooling before flashing"; fail=1 ;;
+		esac
+	fi
+done
+if [ "$found_nct" -ne 1 ]; then
+	echo "FAIL: NCT7802 fan controller was not found"
+	fail=1
+fi
+if [ ! -x /etc/init.d/fan ]; then
+	echo "FAIL: fan-control init script is missing"
+	fail=1
+elif /etc/init.d/fan enabled >/dev/null 2>&1; then
+	echo "FAIL: the unvalidated automatic fan service is enabled in RAM test"
+	fail=1
+else
+	echo "PASS: automatic fan curve is not enabled"
+fi
+
+section "Boot errors"
+errors=$(dmesg | grep -Ei \
+	'1fc00000\.pcie.*link down|LTSSM.*detect\.quiet|probe failed.*-110|airoha-npu.*firmware load.*failed|mt7996.*(firmware|probe).*(failed|error)' \
+	|| true)
+if [ -n "$errors" ]; then
+	printf '%s\n' "$errors"
+	echo "FAIL: PCIe, NPU or MT7996 startup errors were detected"
+	fail=1
+else
+	echo "PASS: no known PCIe, NPU or MT7996 startup error signature"
+fi
+
+section "Result"
+if [ "$fail" -eq 0 ]; then
+	echo "PASS: basic W1701K RAM-test checks passed"
+	exit 0
+fi
+
+echo "FAIL: do not flash the sysupgrade image; keep using the RAM test only"
+exit 1

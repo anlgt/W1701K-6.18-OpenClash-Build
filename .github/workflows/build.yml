@@ -1,0 +1,143 @@
+name: Build W1701K 6.12 OpenClash
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  SOURCE_URL: https://github.com/ZqinKing/immortalwrt.git
+  SOURCE_COMMIT: 9fa61c924219e173bdb62240da3aa9aefc71feef
+  OPENCLASH_TAG: v0.47.156
+  PACKAGES_COMMIT: f78b2f8eab736f4eabc95081988c64537ee18dfb
+  LUCI_COMMIT: 45b36402ec438268fcf37d2072cfa557dd6205ef
+  ROUTING_COMMIT: 8c2385009d29a6d4e3ecc8cc38e8c5c0d71c691f
+  TELEPHONY_COMMIT: 4d8d33a023b24c52cd9443b9dc201fbdfe9c6aef
+  VIDEO_COMMIT: a951381b6c58b9b1eb087f09c9a20cff4ffe8063
+  TZ: Asia/Shanghai
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 350
+
+    steps:
+      - name: Reclaim build space
+        uses: easimon/maximize-build-space@master
+        with:
+          root-reserve-mb: 6144
+          swap-size-mb: 1024
+          remove-android: true
+          remove-codeql: true
+          remove-docker-images: true
+          remove-dotnet: true
+          remove-haskell: true
+
+      - name: Checkout build definition
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            ack antlr3 asciidoc autoconf automake autopoint binutils bison \
+            build-essential bzip2 ccache clang cmake cpio curl device-tree-compiler \
+            ecj fastjar flex gawk gettext gcc-multilib g++-multilib git libgnutls28-dev \
+            gperf haveged help2man intltool lib32gcc-s1 libc6-dev-i386 libelf-dev \
+            libfuse-dev libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev \
+            libmpfr-dev libncurses-dev libpython3-dev libreadline-dev libssl-dev \
+            libtool libyaml-dev libz-dev lld llvm lrzsz mkisofs msmtp nano \
+            ninja-build p7zip-full patch pkgconf python3 python3-dev python3-docutils \
+            python3-pip python3-ply python3-pyelftools qemu-utils re2c rsync scons \
+            squashfs-tools subversion swig texinfo uglifyjs unzip vim wget xmlto \
+            xxd zlib1g-dev zstd
+
+      - name: Fetch the known-working W1701K source
+        run: |
+          git clone --filter=blob:none --no-checkout "$SOURCE_URL" openwrt
+          cd openwrt
+          git fetch --depth 1 origin "$SOURCE_COMMIT"
+          git checkout --detach "$SOURCE_COMMIT"
+          test "$(git rev-parse HEAD)" = "$SOURCE_COMMIT"
+          grep -q '^KERNEL_PATCHVER:=6.12$' target/linux/airoha/Makefile
+
+      - name: Pin compatible feeds
+        working-directory: openwrt
+        run: |
+          ./scripts/feeds update -a
+          git -C feeds/packages fetch --depth 1 origin "$PACKAGES_COMMIT"
+          git -C feeds/packages checkout --detach "$PACKAGES_COMMIT"
+          git -C feeds/luci fetch --depth 1 origin "$LUCI_COMMIT"
+          git -C feeds/luci checkout --detach "$LUCI_COMMIT"
+          git -C feeds/routing fetch --depth 1 origin "$ROUTING_COMMIT"
+          git -C feeds/routing checkout --detach "$ROUTING_COMMIT"
+          git -C feeds/telephony fetch --depth 1 origin "$TELEPHONY_COMMIT"
+          git -C feeds/telephony checkout --detach "$TELEPHONY_COMMIT"
+          git -C feeds/video fetch --depth 1 origin "$VIDEO_COMMIT"
+          git -C feeds/video checkout --detach "$VIDEO_COMMIT"
+          git clone --depth 1 --branch "$OPENCLASH_TAG" \
+            https://github.com/vernesong/OpenClash.git package/OpenClash
+          ./scripts/feeds install -a
+
+      - name: Configure the minimal image
+        run: |
+          cp w1701k-openclash.config openwrt/.config
+          cd openwrt
+          make defconfig
+          required_packages='luci luci-app-openclash luci-compat bash curl ca-bundle ip-full ruby ruby-yaml kmod-tun kmod-nft-tproxy dnsmasq-full unzip wpad-openssl kmod-mt7996e'
+          for package_name in $required_packages; do
+            grep -qx "CONFIG_PACKAGE_${package_name}=y" .config || {
+              echo "Required package was not selected: $package_name"
+              exit 1
+            }
+          done
+          cp .config ../resolved.config
+
+      - name: Download sources
+        working-directory: openwrt
+        run: |
+          make download -j8
+          find dl -type f -size -1024c -print -delete
+
+      - name: Build firmware and matching IPKs
+        working-directory: openwrt
+        run: |
+          make -j"$(nproc)" || make -j1 V=s
+
+      - name: Verify and package output
+        run: |
+          target_dir=openwrt/bin/targets/airoha/an7581
+          manifest=$(find "$target_dir" -maxdepth 1 -name '*gemtek_w1701k.manifest' -print -quit)
+          sysupgrade=$(find "$target_dir" -maxdepth 1 -name '*gemtek_w1701k-squashfs-sysupgrade.bin' -print -quit)
+          initramfs=$(find "$target_dir" -maxdepth 1 -name '*gemtek_w1701k-initramfs-uImage.itb' -print -quit)
+          test -n "$manifest" -a -f "$manifest"
+          test -n "$sysupgrade" -a -f "$sysupgrade"
+          test -n "$initramfs" -a -f "$initramfs"
+          grep -q '^kernel - 6\.12\.' "$manifest"
+          for package_name in luci-app-openclash luci-compat bash curl ca-bundle ip-full ruby ruby-yaml kmod-tun kmod-nft-tproxy dnsmasq-full unzip wpad-openssl kmod-mt7996e; do
+            grep -q "^${package_name} - " "$manifest" || {
+              echo "Required package missing from image: $package_name"
+              exit 1
+            }
+          done
+
+          mkdir -p output/firmware output/offline-ipk
+          cp "$sysupgrade" "$initramfs" "$manifest" "$target_dir/sha256sums" output/firmware/
+          cp resolved.config output/
+          find openwrt/bin/targets/airoha/an7581/packages openwrt/bin/packages \
+            -type f -name '*.ipk' -exec cp -n '{}' output/offline-ipk/ ';'
+          openwrt/scripts/ipkg-make-index.sh output/offline-ipk > output/offline-ipk/Packages
+          gzip -9 -c output/offline-ipk/Packages > output/offline-ipk/Packages.gz
+          tar -C output -czf output/w1701k-6.12-matching-ipk.tar.gz offline-ipk
+          sha256sum output/firmware/* output/w1701k-6.12-matching-ipk.tar.gz > output/SHA256SUMS
+
+      - name: Upload firmware and offline package repository
+        uses: actions/upload-artifact@v4
+        with:
+          name: W1701K-6.12.74-OpenClash-0.47.156
+          path: output/
+          retention-days: 90
+          compression-level: 0

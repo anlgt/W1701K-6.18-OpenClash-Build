@@ -1,0 +1,15 @@
+diff --git a/target/linux/airoha/image/an7581.mk b/target/linux/airoha/image/an7581.mk
+index 51e3496f92..c626f6397a 100644
+--- a/target/linux/airoha/image/an7581.mk
++++ b/target/linux/airoha/image/an7581.mk
+@@ -197,8 +197,9 @@ define Device/gemtek_w1701k
+   DEVICE_MODEL := W1701K
+   DEVICE_ALT0_VENDOR := Quantum Fiber
+   DEVICE_ALT0_MODEL := W1701K
+-  DEVICE_PACKAGES :=  kmod-i2c-an7581 kmod-hwmon-nct7802 \
++  DEVICE_PACKAGES := kmod-hwmon-nct7802 \
+ 			kmod-mt7996-firmware kmod-phy-airoha-en8811h
++  KERNEL_SIZE := 16384k
+   IMAGE/sysupgrade.bin := sysupgrade-tar | append-metadata
+   SOC := an7581
+ endef

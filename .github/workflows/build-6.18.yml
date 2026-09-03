@@ -1,0 +1,462 @@
+name: Build W1701K 6.18.44 Wi-Fi Fix
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: w1701k-6.18-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  SOURCE_URL: https://github.com/OpenWRT-fanboy/OpenW1700k.git
+  SOURCE_COMMIT: 465633077348b8015e5282193af2b9427b6a8b78
+  APP_PACK_COMMIT: 38be3a4a0b66ccbb4311a12ad0890de571a0fcce
+  PACKAGES_COMMIT: fbde5d1e31608aa13ad779f97da793e841bc214f
+  LUCI_COMMIT: 506ca606d379dd69e9826b2a5e7e2ab90e6b89a5
+  ROUTING_COMMIT: 4b9891b9136259f93294a424507ed24c5e8c1cbd
+  OPENCLASH_TAG: v0.47.156
+  OPENCLASH_COMMIT: c3a33c1d3407956fdf8f0e0b7c1a4c52e6ad9593
+  ARGON_THEME_COMMIT: 2a28799ca063aba7edc3314143b93c8325c86df4
+  ARGON_CONFIG_COMMIT: 3e099a37c3f71d0de677f1b6b0f4bffd57d91dac
+  MIHOMO_TAG: v1.19.30
+  MIHOMO_URL: https://github.com/MetaCubeX/mihomo/releases/download/v1.19.30/mihomo-linux-arm64-v1.19.30.gz
+  MIHOMO_SHA256: 58896873736d28628f66de3677c8654fa0f180662523148e136cff4f6e890069
+  RELEASE_TAG: w1701k-6.18.44-r${{ github.run_number }}-${{ github.run_attempt }}
+  PACKAGE_REPO_URL: https://github.com/${{ github.repository }}/releases/download/w1701k-6.18.44-r${{ github.run_number }}-${{ github.run_attempt }}/packages.adb
+  GH_TOKEN: ${{ github.token }}
+  TZ: Asia/Shanghai
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 350
+
+    steps:
+      - name: Reclaim build space
+        uses: easimon/maximize-build-space@c28619d8999a147d5e09c1199f84ff6af6ad5794
+        with:
+          root-reserve-mb: 6144
+          swap-size-mb: 2048
+          remove-android: true
+          remove-codeql: true
+          remove-docker-images: true
+          remove-dotnet: true
+          remove-haskell: true
+
+      - name: Checkout build definition
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Require a public repository for the signed APK feed
+        run: |
+          visibility=$(gh api "repos/${GITHUB_REPOSITORY}" --jq .visibility)
+          if [ "$visibility" != "public" ]; then
+            echo "::error::This workflow publishes the matching signed APK repository as public release assets. Use a public GitHub repository."
+            exit 1
+          fi
+
+      - name: Install build dependencies
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            ack antlr3 asciidoc autoconf automake autopoint binutils bison \
+            build-essential bzip2 ccache clang cmake cpio curl device-tree-compiler \
+            ecj fastjar file flex gawk genisoimage gettext gcc-multilib g++-multilib git \
+            libgnutls28-dev gperf haveged help2man intltool lib32gcc-s1 \
+            libc6-dev-i386 libelf-dev libfuse-dev libglib2.0-dev libgmp3-dev \
+            libltdl-dev libmpc-dev libmpfr-dev libncurses-dev libpython3-dev \
+            libreadline-dev libssl-dev libtool libyaml-dev lld llvm \
+            lrzsz msmtp nano ninja-build p7zip-full patch pkgconf \
+            python3 python3-dev python3-docutils python3-pip python3-ply \
+            python3-pyelftools qemu-utils re2c rename rsync scons squashfs-tools \
+            subversion swig texinfo uglifyjs unzip vim wget xmlto xxd zlib1g-dev zstd
+
+      - name: Fetch the pinned 6.18.44 W1701K source
+        run: |
+          git init openwrt
+          git -C openwrt remote add origin "$SOURCE_URL"
+          git -C openwrt fetch --depth 1 origin "$SOURCE_COMMIT"
+          git -C openwrt checkout --detach FETCH_HEAD
+          test "$(git -C openwrt rev-parse HEAD)" = "$SOURCE_COMMIT"
+          grep -Fqx 'KERNEL_PATCHVER:=6.18' openwrt/target/linux/airoha/Makefile
+          grep -Fqx 'LINUX_VERSION-6.18 = .44' openwrt/target/linux/generic/kernel-6.18
+
+          # Refuse the later branch head that forces performance mode and +200 MHz.
+          grep -Fqx 'CONFIG_CPU_FREQ_DEFAULT_GOV_ONDEMAND=y' \
+            openwrt/target/linux/airoha/an7581/config-6.18
+          grep -q 'opp-500000000' openwrt/target/linux/airoha/dts/an7581.dtsi
+          if grep -q 'opp-1400000000' openwrt/target/linux/airoha/dts/an7581.dtsi; then
+            echo "::error::Unexpected forced-overclock source"
+            exit 1
+          fi
+
+      - name: Import the W1700K reference application pack
+        working-directory: openwrt
+        run: |
+          git fetch --depth 1 origin "$APP_PACK_COMMIT"
+          app_paths=(
+            package/luci-app-airoha-flowsense
+            package/luci-app-airoha-npu
+            package/luci-app-w1700k-fancontrol
+            package/luci-app-mlo
+            package/luci-app-wifi7
+          )
+          git restore --source="$APP_PACK_COMMIT" --staged --worktree -- "${app_paths[@]}"
+          grep -Fqx 'PKG_VERSION:=1.1.7' package/luci-app-airoha-flowsense/Makefile
+
+      - name: Apply and verify W1701K compatibility fixes
+        working-directory: openwrt
+        run: |
+          git apply --check ../patches/001-w1701k-pcie-x2-6.18.patch
+          git apply ../patches/001-w1701k-pcie-x2-6.18.patch
+          git apply --check ../patches/002-w1701k-app-compat.patch
+          git apply ../patches/002-w1701k-app-compat.patch
+          git apply --check ../patches/003-w1701k-separate-initramfs.patch
+          git apply ../patches/003-w1701k-separate-initramfs.patch
+          git apply --check ../patches/004-w1701k-image-safety.patch
+          git apply ../patches/004-w1701k-image-safety.patch
+          git diff --check
+
+          dts=target/linux/airoha/dts/an7581-w1701k.dts
+          grep -Fq 'reg-names = "pcie-mac", "sec-pcie-mac";' "$dts"
+          grep -Fq 'num-lanes = <2>;' "$dts"
+          grep -Fq 'airoha,scu = <&scuclk>;' "$dts"
+          if grep -Fq 'airoha,x2-mode;' "$dts"; then
+            echo "::error::Obsolete PCIe x2 property survived the patch"
+            exit 1
+          fi
+          grep -Fq 'FEATURES:=dt squashfs nand separate_ramdisk gpio' \
+            target/linux/airoha/Makefile
+          grep -Fq 'with-initrd | pad-to 128k' \
+            target/linux/airoha/image/an7581.mk
+          grep -Fq 'KERNEL_SIZE := 16384k' \
+            target/linux/airoha/image/an7581.mk
+          if grep -Fq 'kmod-i2c-an7581' target/linux/airoha/image/an7581.mk; then
+            echo "::error::Nonexistent W1701K I2C package survived the patch"
+            exit 1
+          fi
+
+          sh -n package/luci-app-w1700k-fancontrol/root/etc/init.d/fan
+          sh -n package/luci-app-w1700k-fancontrol/root/usr/libexec/rpcd/luci.fan
+          sh -n package/luci-app-airoha-flowsense/root/usr/libexec/rpcd/luci.airoha_flowsense
+          node --check package/luci-app-w1700k-fancontrol/htdocs/luci-static/resources/view/fan/status.js
+          node --check package/luci-app-airoha-flowsense/htdocs/luci-static/resources/view/airoha_flowsense/status.js
+          git diff HEAD --binary > ../source-patches-applied.diff
+
+      - name: Pin feeds and third-party LuCI packages
+        working-directory: openwrt
+        run: |
+          printf '%s\n' \
+            "src-git packages https://github.com/openwrt/packages.git^$PACKAGES_COMMIT" \
+            "src-git luci https://github.com/openwrt/luci.git^$LUCI_COMMIT" \
+            "src-git routing https://github.com/openwrt/routing.git^$ROUTING_COMMIT" \
+            > feeds.conf
+          ./scripts/feeds update -a
+          test "$(git -C feeds/packages rev-parse HEAD)" = "$PACKAGES_COMMIT"
+          test "$(git -C feeds/luci rev-parse HEAD)" = "$LUCI_COMMIT"
+          test "$(git -C feeds/routing rev-parse HEAD)" = "$ROUTING_COMMIT"
+          ./scripts/feeds install -a
+
+          clone_pinned() {
+            repo_url="$1"
+            repo_commit="$2"
+            destination="$3"
+            git init "$destination"
+            git -C "$destination" remote add origin "$repo_url"
+            git -C "$destination" fetch --depth 1 origin "$repo_commit"
+            git -C "$destination" checkout --detach FETCH_HEAD
+            test "$(git -C "$destination" rev-parse HEAD)" = "$repo_commit"
+          }
+
+          clone_pinned https://github.com/vernesong/OpenClash.git \
+            "$OPENCLASH_COMMIT" package/OpenClash
+          grep -Fqx 'PKG_VERSION:=0.47.156' \
+            package/OpenClash/luci-app-openclash/Makefile
+
+          clone_pinned https://github.com/jerrykuku/luci-theme-argon.git \
+            "$ARGON_THEME_COMMIT" package/extra/luci-theme-argon
+          clone_pinned https://github.com/jerrykuku/luci-app-argon-config.git \
+            "$ARGON_CONFIG_COMMIT" package/extra/luci-app-argon-config
+
+      - name: Bundle the verified ARM64 Mihomo core
+        working-directory: openwrt
+        run: |
+          curl -fL --retry 5 --retry-all-errors --connect-timeout 20 \
+            "$MIHOMO_URL" -o /tmp/mihomo-arm64.gz
+          echo "$MIHOMO_SHA256  /tmp/mihomo-arm64.gz" | sha256sum -c -
+          gzip -t /tmp/mihomo-arm64.gz
+          install -d package/OpenClash/luci-app-openclash/root/etc/openclash/core
+          gzip -dc /tmp/mihomo-arm64.gz \
+            > package/OpenClash/luci-app-openclash/root/etc/openclash/core/clash_meta
+          chmod 0755 package/OpenClash/luci-app-openclash/root/etc/openclash/core/clash_meta
+          file package/OpenClash/luci-app-openclash/root/etc/openclash/core/clash_meta \
+            | grep -q 'ARM aarch64'
+
+      - name: Add defaults, hardware checker and same-build APK feed
+        run: |
+          install -d openwrt/files
+          cp -a files/. openwrt/files/
+          chmod 0755 \
+            openwrt/files/etc/uci-defaults/99-w1701k-custom-defaults \
+            openwrt/files/usr/bin/w1701k-hwcheck
+
+          install -d openwrt/files/etc/apk/repositories.d
+          printf '%s\n' "$PACKAGE_REPO_URL" \
+            > openwrt/files/etc/apk/repositories.d/distfeeds.list
+          printf '%s\n' '# Add user repositories here.' \
+            > openwrt/files/etc/apk/repositories.d/customfeeds.list
+
+          printf '%s\n' \
+            "W1701K custom build" \
+            "source=$SOURCE_URL" \
+            "source_commit=$SOURCE_COMMIT" \
+            "app_pack_commit=$APP_PACK_COMMIT" \
+            "kernel=6.18.44" \
+            "openclash=$OPENCLASH_TAG" \
+            "mihomo=$MIHOMO_TAG" \
+            "package_repo=$PACKAGE_REPO_URL" \
+            > openwrt/files/etc/w1701k-build-info
+
+      - name: Configure the 6.18 image
+        run: |
+          cp w1701k-6.18-openclash.config openwrt/.config
+          cd openwrt
+          make defconfig
+
+          required_packages='apk-openssl luci luci-app-package-manager luci-i18n-base-zh-cn luci-i18n-firewall-zh-cn luci-i18n-package-manager-zh-cn luci-app-upnp luci-i18n-upnp-zh-cn miniupnpd-nftables luci-theme-argon luci-app-argon-config luci-i18n-argon-config-zh-cn luci-app-openclash luci-compat bash ca-bundle curl dnsmasq-full ip-full kmod-inet-diag kmod-nft-tproxy kmod-tun ruby ruby-yaml unzip irqbalance luci-app-irqbalance luci-app-airoha-npu luci-app-airoha-flowsense luci-app-w1700k-fancontrol luci-app-wifi7 luci-app-mlo kmod-airoha-eth kmod-airoha-npu airoha-en7581-mt7996-npu-firmware kmod-dsa-mt7530-mmio kmod-phy-airoha-en8811h airoha-en8811h-firmware kmod-hwmon-nct7802 kmod-mt7996e kmod-mt7996-firmware iw hostapd-utils rpcd-mod-file ip-bridge wpad-openssl pciutils'
+          for package_name in $required_packages; do
+            grep -Fqx "CONFIG_PACKAGE_${package_name}=y" .config || {
+              echo "Required package was not selected: $package_name"
+              exit 1
+            }
+          done
+
+          required_symbols='CONFIG_USE_APK=y CONFIG_TARGET_ROOTFS_INITRAMFS=y CONFIG_TARGET_ROOTFS_INITRAMFS_SEPARATE=y CONFIG_TARGET_INITRAMFS_COMPRESSION_XZ=y CONFIG_TARGET_ROOTFS_SQUASHFS=y CONFIG_BUSYBOX_CONFIG_DEVMEM=y CONFIG_KERNEL_DEVMEM=y CONFIG_DRIVER_11AC_SUPPORT=y CONFIG_DRIVER_11AX_SUPPORT=y CONFIG_DRIVER_11BE_SUPPORT=y CONFIG_KERNEL_PAGE_POOL=y CONFIG_KERNEL_RELAY=y CONFIG_PACKAGE_MAC80211_DEBUGFS=y CONFIG_PACKAGE_dnsmasq_full_nftset=y CONFIG_LIBCURL_OPENSSL=y CONFIG_LIBCURL_TFTP=y'
+          for symbol in $required_symbols; do
+            grep -Fqx "$symbol" .config || {
+              echo "Required configuration was not selected: $symbol"
+              exit 1
+            }
+          done
+
+          grep -Fqx '# CONFIG_PACKAGE_dnsmasq is not set' .config
+          grep -Fqx '# CONFIG_PACKAGE_wpad-basic-mbedtls is not set' .config
+          grep -Fqx '# CONFIG_PACKAGE_apk-mbedtls is not set' .config
+          grep -Fqx '# CONFIG_LIBCURL_MBEDTLS is not set' .config
+          grep -Fqx 'CONFIG_I2C_MT7621=y' target/linux/airoha/an7581/config-6.18
+
+          cp .config ../resolved-6.18.config
+          ./scripts/diffconfig.sh > ../resolved-6.18.diffconfig
+
+      - name: Download sources
+        working-directory: openwrt
+        run: |
+          make download -j8 || true
+          find dl -type f -size -1024c -print -delete
+          make download -j8
+          if find dl -type f -size -1024c -print -quit | grep -q .; then
+            echo "::error::One or more source downloads are still incomplete"
+            exit 1
+          fi
+
+      - name: Build firmware and matching APK repository
+        working-directory: openwrt
+        run: |
+          make -j"$(nproc)" || make -j1 V=s
+          make package/index
+          make package/merge-index
+
+      - name: Verify and package output
+        run: |
+          target_dir=openwrt/bin/targets/airoha/an7581
+          manifest=$(find "$target_dir" -maxdepth 1 -name '*gemtek_w1701k.manifest' -print -quit)
+          sysupgrade=$(find "$target_dir" -maxdepth 1 -name '*gemtek_w1701k-squashfs-sysupgrade.bin' -print -quit)
+          initramfs=$(find "$target_dir" -maxdepth 1 -name '*gemtek_w1701k-initramfs-uImage.itb' -print -quit)
+          test -n "$manifest" -a -f "$manifest"
+          test -n "$sysupgrade" -a -f "$sysupgrade"
+          test -n "$initramfs" -a -f "$initramfs"
+          test -s "$sysupgrade"
+          test -s "$initramfs"
+          grep -q '^kernel - 6\.18\.44' "$manifest"
+
+          openwrt/staging_dir/host/bin/mkimage -l "$initramfs" \
+            | tee initramfs-layout.txt
+          grep -q 'Type:[[:space:]]*RAMDisk Image' initramfs-layout.txt
+          grep -q 'Init Ramdisk:' initramfs-layout.txt
+
+          required_manifest='luci-app-package-manager luci-i18n-base-zh-cn luci-i18n-firewall-zh-cn luci-i18n-package-manager-zh-cn luci-app-openclash luci-compat bash ca-bundle curl dnsmasq-full ip-full kmod-inet-diag kmod-nft-tproxy kmod-tun ruby ruby-yaml unzip luci-app-upnp luci-i18n-upnp-zh-cn miniupnpd-nftables luci-theme-argon luci-app-argon-config luci-i18n-argon-config-zh-cn irqbalance luci-app-irqbalance luci-i18n-irqbalance-zh-cn luci-app-airoha-npu luci-app-airoha-flowsense luci-app-w1700k-fancontrol luci-app-wifi7 luci-app-mlo kmod-airoha-eth kmod-airoha-npu airoha-en7581-mt7996-npu-firmware kmod-dsa-mt7530-mmio kmod-phy-airoha-en8811h airoha-en8811h-firmware kmod-hwmon-nct7802 kmod-mt7996e kmod-mt7996-firmware iw hostapd-utils rpcd-mod-file wireless-regdb wpad-openssl pciutils'
+          for package_name in $required_manifest; do
+            grep -q "^${package_name} - " "$manifest" || {
+              echo "Required package missing from image: $package_name"
+              exit 1
+            }
+          done
+
+          core_in_root=$(find openwrt/build_dir -path '*/root-airoha/etc/openclash/core/clash_meta' -print -quit)
+          test -n "$core_in_root" -a -x "$core_in_root"
+          file "$core_in_root" | grep -q 'ARM aarch64'
+
+          mkdir -p output/firmware output/repository output/build-record
+          cp "$sysupgrade" "$initramfs" "$manifest" output/firmware/
+          for extra in sha256sums profiles.json config.buildinfo feeds.buildinfo version.buildinfo; do
+            [ ! -f "$target_dir/$extra" ] || cp "$target_dir/$extra" output/firmware/
+          done
+          # GitHub Release rewrites some special characters (notably '~') in
+          # asset names. Fetch each package from the build's merged index into
+          # a content-hash name, then write that exact naming rule into a new
+          # signed index. This keeps every URL in packages.adb stable on GitHub.
+          source_repository=openwrt/staging_dir/packages/airoha
+          apk_host=openwrt/staging_dir/host/bin/apk
+          source_index=$(realpath "$source_repository/packages.adb")
+          package_arch=$(sed -n 's/^CONFIG_TARGET_ARCH_PACKAGES="\([^"]*\)"/\1/p' \
+            openwrt/.config)
+          test -x "$apk_host"
+          test -s "$source_index"
+          test "$package_arch" = 'aarch64_cortex-a53'
+          source_apk_count=$(find "$source_repository" -maxdepth 1 -name '*.apk' | wc -l)
+          test "$source_apk_count" -gt 0
+          test "$source_apk_count" -lt 900
+
+          "$apk_host" \
+            --root "$GITHUB_WORKSPACE/openwrt" \
+            --keys-dir "$GITHUB_WORKSPACE/openwrt" \
+            --allow-untrusted --no-interactive --no-cache \
+            --repositories-file /dev/null \
+            --arch "$package_arch" \
+            fetch --from none --all-matches \
+            --repository "file://$source_index" \
+            --output "$GITHUB_WORKSPACE/output/repository" \
+            --pkgname-spec '${name}-${hash}.apk' '*'
+
+          apk_count=$(find output/repository -maxdepth 1 -name '*.apk' | wc -l)
+          test "$apk_count" -eq "$source_apk_count"
+          if find output/repository -maxdepth 1 -name '*.apk' -printf '%f\n' \
+            | grep -Eq '[^A-Za-z0-9._-]'; then
+            echo "::error::A generated APK asset name is unsafe for GitHub Release"
+            exit 1
+          fi
+
+          (
+            cd output/repository
+            "$GITHUB_WORKSPACE/$apk_host" mkndx \
+              --root "$GITHUB_WORKSPACE/openwrt" \
+              --keys-dir "$GITHUB_WORKSPACE/openwrt" \
+              --allow-untrusted \
+              --sign "$GITHUB_WORKSPACE/openwrt/private-key.pem" \
+              --pkgname-spec '${name}-${hash}.apk' \
+              --output packages.adb \
+              ./*.apk
+          )
+          test -s output/repository/packages.adb
+          "$apk_host" adbdump --format json output/repository/packages.adb \
+            > output/build-record/packages-index.json
+          jq -e '."pkgname-spec" == "${name}-${hash}.apk"' \
+            output/build-record/packages-index.json >/dev/null
+
+          # Resolve and verify every package through the final index once,
+          # using the same URL rule that the router will use.
+          smoke_repository=$(mktemp -d)
+          final_index=$(realpath output/repository/packages.adb)
+          "$apk_host" \
+            --root "$GITHUB_WORKSPACE/openwrt" \
+            --keys-dir "$GITHUB_WORKSPACE/openwrt" \
+            --no-interactive --no-cache \
+            --repositories-file /dev/null \
+            --arch "$package_arch" \
+            fetch --from none --all-matches --link \
+            --repository "file://$final_index" \
+            --output "$smoke_repository" \
+            --pkgname-spec '${name}-${hash}.apk' '*'
+          smoke_apk_count=$(find "$smoke_repository" -maxdepth 1 -name '*.apk' | wc -l)
+          test "$smoke_apk_count" -eq "$apk_count"
+          rm -rf "$smoke_repository"
+
+          cp openwrt/public-key.pem output/repository/
+          cp resolved-6.18.config resolved-6.18.diffconfig \
+            source-patches-applied.diff initramfs-layout.txt output/build-record/
+
+          printf '%s\n' \
+            "Release: $RELEASE_TAG" \
+            "Source commit: $SOURCE_COMMIT" \
+            "Kernel: 6.18.44" \
+            "OpenClash: $OPENCLASH_TAG" \
+            "Mihomo: $MIHOMO_TAG" \
+            "Matching APK count: $apk_count" \
+            'APK naming: ${name}-${hash}.apk' \
+            "Signed APK index: $PACKAGE_REPO_URL" \
+            > output/build-record/release-info.txt
+
+          (
+            cd output
+            find firmware repository build-record -type f \
+              -exec sha256sum '{}' + | sort -k2 > SHA256SUMS
+            awk '{ name=$2; sub(/^.*\//, "", name); print $1 "  " name }' \
+              SHA256SUMS | sort -k2 > RELEASE-SHA256SUMS
+          )
+
+      - name: Upload complete build artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: W1701K-6.18.44-WiFiFix-OpenClash-${{ github.run_number }}-${{ github.run_attempt }}
+          path: output/
+          retention-days: 90
+          compression-level: 0
+
+      - name: Publish firmware and its signed matching APK feed
+        run: |
+          printf '%s\n' \
+            '## W1701K 6.18.44 experimental RAM-test build' \
+            '' \
+            '- Fixes the W1701K PCIe x2 device-tree description used by the 6.18 driver.' \
+            '- Pins source, feeds, OpenClash, Argon and Mihomo versions.' \
+            '- Contains an initramfs ITB for RAM testing and a sysupgrade BIN for use only after the test passes.' \
+            '- The release assets also form the signed APK repository embedded in this exact firmware.' \
+            '- Fan control is installed but disabled until its W1701K curve is validated.' \
+            '' \
+            '**Do not flash the BIN if the RAM test reports missing MT7990, fewer than three Wi-Fi bands, or PCIe link-down errors.**' \
+            > release-notes.md
+
+          gh release create "$RELEASE_TAG" \
+            --title "W1701K 6.18.44 Wi-Fi Fix (RAM test first)" \
+            --notes-file release-notes.md \
+            --target "$GITHUB_SHA" \
+            --draft
+
+          release_visible=false
+          for attempt in $(seq 1 10); do
+            if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+              release_visible=true
+              break
+            fi
+            sleep 2
+          done
+          if [ "$release_visible" != true ]; then
+            echo "::error::Draft release was not visible after creation"
+            exit 1
+          fi
+
+          find output/firmware output/build-record -type f -print0 \
+            | xargs -0 -n 50 gh release upload "$RELEASE_TAG" --clobber
+          gh release upload "$RELEASE_TAG" output/RELEASE-SHA256SUMS --clobber
+          find output/repository -maxdepth 1 -type f -print0 \
+            | xargs -0 -n 50 gh release upload "$RELEASE_TAG" --clobber
+
+          find output/repository -maxdepth 1 -type f -printf '%f\n' \
+            | LC_ALL=C sort > expected-repository-assets.txt
+          gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name' \
+            | LC_ALL=C sort > uploaded-assets.txt
+          comm -23 expected-repository-assets.txt uploaded-assets.txt \
+            > missing-or-renamed-assets.txt
+          if [ -s missing-or-renamed-assets.txt ]; then
+            echo "::error::GitHub renamed or omitted one or more APK repository assets; the draft release was not published"
+            cat missing-or-renamed-assets.txt
+            exit 1
+          fi
+
+          gh release edit "$RELEASE_TAG" --draft=false --prerelease
+          curl -fIL --retry 5 --retry-all-errors --connect-timeout 20 \
+            "$PACKAGE_REPO_URL"

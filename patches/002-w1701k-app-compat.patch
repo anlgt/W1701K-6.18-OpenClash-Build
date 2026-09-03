@@ -1,0 +1,124 @@
+diff --git a/package/luci-app-airoha-flowsense/htdocs/luci-static/resources/view/airoha_flowsense/status.js b/package/luci-app-airoha-flowsense/htdocs/luci-static/resources/view/airoha_flowsense/status.js
+index 311b464ffe..3b3a8cdef4 100644
+--- a/package/luci-app-airoha-flowsense/htdocs/luci-static/resources/view/airoha_flowsense/status.js
++++ b/package/luci-app-airoha-flowsense/htdocs/luci-static/resources/view/airoha_flowsense/status.js
+@@ -1272,7 +1272,7 @@ function buildWifiTachoElements(wifi, ti, st, ppe) {
+ 
+ /* ── Ethernet Port Horizontal Bar Gauges ── */
+ function _ethLabel(iface) {
+-	var m = { wan:'WAN', lan1:'LAN 1', lan2:'LAN 2', lan3:'LAN 3', lan4:'LAN 4' };
++	var m = { wan:'WAN', lan:'LAN 1', lan1:'LAN 1', lan2:'LAN 2', lan3:'LAN 3', lan4:'LAN 4' };
+ 	return m[iface] || iface.toUpperCase();
+ }
+ function _ethSpeed(speed) {
+@@ -1325,7 +1325,7 @@ function buildEthPortSVG(port, txMbps, rxMbps, ppe) {
+ 			footerClr = '#555';
+ 		}
+ 	} else {
+-		var portIdx  = {lan1:0, lan2:1, lan3:2, lan4:3}[iface];
++		var portIdx  = {lan:0, lan1:0, lan2:1, lan3:2, lan4:3}[iface];
+ 		var bndPort  = (ppe && ppe.bnd && ppe.bnd.port_bnd) ? (ppe.bnd.port_bnd[portIdx] || 0) : 0;
+ 		footerTxt = 'BND: ' + bndPort;
+ 		footerClr = bndPort > 0 ? '#00c8ff' : '#555';
+diff --git a/package/luci-app-airoha-flowsense/root/usr/libexec/rpcd/luci.airoha_flowsense b/package/luci-app-airoha-flowsense/root/usr/libexec/rpcd/luci.airoha_flowsense
+index 748f3ea2a3..676fa46130 100755
+--- a/package/luci-app-airoha-flowsense/root/usr/libexec/rpcd/luci.airoha_flowsense
++++ b/package/luci-app-airoha-flowsense/root/usr/libexec/rpcd/luci.airoha_flowsense
+@@ -246,8 +246,11 @@ get_ppe_entries() {
+ 	unb_json=$(printf '%s' "$unb_json" | sed 's/}$/,"band_unb":'"$band_unb"'}/')
+ 
+ 	# Per-port BND counts for LAN ports using bridge FDB learned MACs
++	# The pinned W1701K DTS names its sole physical LAN netdev "lan".
++	local lan1_iface="lan1"
++	[ -d "/sys/class/net/$lan1_iface" ] || lan1_iface="lan"
+ 	local macs_p1 macs_p2 macs_p3 macs_p4
+-	macs_p1=$(bridge fdb show dev lan1 2>/dev/null | grep -v " self\| permanent" | awk '{print $1}' | tr '\n' '|' | sed 's/|$//')
++	macs_p1=$(bridge fdb show dev "$lan1_iface" 2>/dev/null | grep -v " self\| permanent" | awk '{print $1}' | tr '\n' '|' | sed 's/|$//')
+ 	macs_p2=$(bridge fdb show dev lan2 2>/dev/null | grep -v " self\| permanent" | awk '{print $1}' | tr '\n' '|' | sed 's/|$//')
+ 	macs_p3=$(bridge fdb show dev lan3 2>/dev/null | grep -v " self\| permanent" | awk '{print $1}' | tr '\n' '|' | sed 's/|$//')
+ 	macs_p4=$(bridge fdb show dev lan4 2>/dev/null | grep -v " self\| permanent" | awk '{print $1}' | tr '\n' '|' | sed 's/|$//')
+@@ -1089,8 +1092,10 @@ get_conflict_alerts() {
+ 
+ get_eth_stats() {
+ 	printf '{"ports":['
++	local ports="wan lan1 lan2 lan3 lan4"
++	[ -d /sys/class/net/lan1 ] || ports="wan lan lan2 lan3 lan4"
+ 	local first=1
+-	for iface in wan lan1 lan2 lan3 lan4; do
++	for iface in $ports; do
+ 		local sys="/sys/class/net/$iface"
+ 		[ -d "$sys" ] || continue
+ 		local operstate up=false
+diff --git a/package/luci-app-w1700k-fancontrol/htdocs/luci-static/resources/view/fan/status.js b/package/luci-app-w1700k-fancontrol/htdocs/luci-static/resources/view/fan/status.js
+index 3dd35bb950..cb9c63e520 100644
+--- a/package/luci-app-w1700k-fancontrol/htdocs/luci-static/resources/view/fan/status.js
++++ b/package/luci-app-w1700k-fancontrol/htdocs/luci-static/resources/view/fan/status.js
+@@ -126,8 +126,8 @@ return view.extend({
+ 						E('div', { 'class': 'cbi-section-node' }, [
+ 							createTempGauge(_('CPU'), status.temp_cpu || 0, 'temp-cpu'),
+ 							createTempGauge(_('Board (Fan Curve)'), status.temp_board || 0, 'temp-board'),
+-							createTempGauge(_('LAN2 10G PHY'), status.temp_phy1 || 0, 'temp-phy1'),
+-							createTempGauge(_('WAN 10G PHY'), status.temp_phy2 || 0, 'temp-phy2')
++							createTempGauge(_('LAN PHY'), status.temp_phy1 || 0, 'temp-phy1'),
++							createTempGauge(_('WAN PHY'), status.temp_phy2 || 0, 'temp-phy2')
+ 						])
+ 					]),
+ 					// WiFi Temperatures
+diff --git a/package/luci-app-w1700k-fancontrol/root/etc/init.d/fan b/package/luci-app-w1700k-fancontrol/root/etc/init.d/fan
+index 2b4171ca93..73d9f527fe 100755
+--- a/package/luci-app-w1700k-fancontrol/root/etc/init.d/fan
++++ b/package/luci-app-w1700k-fancontrol/root/etc/init.d/fan
+@@ -11,7 +11,7 @@ find_nct7802() {
+ 			return
+ 		fi
+ 	done
+-	echo "/sys/class/hwmon/hwmon5"  # fallback
++	return 1
+ }
+ 
+ HWMON=$(find_nct7802)
+diff --git a/package/luci-app-w1700k-fancontrol/root/usr/libexec/rpcd/luci.fan b/package/luci-app-w1700k-fancontrol/root/usr/libexec/rpcd/luci.fan
+index ca9f974f82..b0c75f0b1f 100755
+--- a/package/luci-app-w1700k-fancontrol/root/usr/libexec/rpcd/luci.fan
++++ b/package/luci-app-w1700k-fancontrol/root/usr/libexec/rpcd/luci.fan
+@@ -10,7 +10,7 @@ find_nct7802() {
+ 			return
+ 		fi
+ 	done
+-	echo "/sys/class/hwmon/hwmon5"  # fallback
++	return 1
+ }
+ 
+ # Dynamically find mt7996 WiFi hwmon devices
+@@ -32,7 +32,7 @@ find_mt7996_hwmon() {
+ 
+ # Dynamically find PHY hwmon devices (mt7530 DSA)
+ find_phy_hwmon() {
+-	local suffix="$1"  # :05 or :08
++	local suffix="$1"  # e.g. :05/:08 (W1700K) or :0e/:0f (W1701K)
+ 	for hwmon in /sys/class/hwmon/hwmon*; do
+ 		if [ -f "$hwmon/name" ]; then
+ 			local name=$(cat "$hwmon/name" 2>/dev/null)
+@@ -80,9 +80,19 @@ get_status() {
+ 	# temp1 = board local (used by hardware fan curve), temp2 = external (disconnected), temp4 = external
+ 	temp_board=$(read_temp "${HWMON}/temp1_input")
+ 
+-	# Read PHY temperatures from mt7530 DSA switch sensors (dynamic lookup)
+-	local phy1_hwmon=$(find_phy_hwmon ":05")
+-	local phy2_hwmon=$(find_phy_hwmon ":08")
++	# Read PHY temperatures from DSA/MDIO hwmon sensors.
++	# W1700K: LAN=:05, WAN=:08. W1701K: LAN=:0e, WAN=:0f.
++	local phy_lan_suffix=":05"
++	local phy_wan_suffix=":08"
++	case "$(cat /tmp/sysinfo/board_name 2>/dev/null)" in
++		gemtek,w1701k*)
++			phy_lan_suffix=":0e"
++			phy_wan_suffix=":0f"
++			;;
++	esac
++
++	local phy1_hwmon=$(find_phy_hwmon "$phy_lan_suffix")
++	local phy2_hwmon=$(find_phy_hwmon "$phy_wan_suffix")
+ 	temp_phy1=$([ -n "$phy1_hwmon" ] && read_temp "$phy1_hwmon/temp1_input" || echo 0)
+ 	temp_phy2=$([ -n "$phy2_hwmon" ] && read_temp "$phy2_hwmon/temp1_input" || echo 0)
+ 

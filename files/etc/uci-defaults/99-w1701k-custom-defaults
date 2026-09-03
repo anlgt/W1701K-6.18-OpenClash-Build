@@ -1,0 +1,28 @@
+#!/bin/sh
+
+# Spread hardware interrupts across all four CPU cores by default.
+uci -q set irqbalance.irqbalance.enabled='1' || exit 1
+uci -q commit irqbalance || exit 1
+if [ -x /etc/init.d/irqbalance ]; then
+	/etc/init.d/irqbalance enable || exit 1
+fi
+
+# Install the fan page, but do not apply the W1700K-derived PWM curve until it
+# has been validated on this W1701K in the RAM-test system.
+if [ -x /etc/init.d/fan ]; then
+	/etc/init.d/fan disable || exit 1
+	if /etc/init.d/fan enabled >/dev/null 2>&1; then
+		logger -t w1701k-defaults \
+			'refusing to continue: unvalidated fan service is still enabled'
+		exit 1
+	fi
+fi
+
+# Select Argon without removing Bootstrap, so LuCI still has a fallback theme.
+uci -q set luci.main.mediaurlbase='/luci-static/argon' || exit 1
+uci -q commit luci || exit 1
+
+# UPnP is deliberately left disabled. Enable it only when a LAN application
+# needs automatic port mapping; its package defaults restrict it to LAN.
+
+exit 0

@@ -1,0 +1,26 @@
+diff --git a/target/linux/airoha/Makefile b/target/linux/airoha/Makefile
+index 28a7153b0c..acb11f6124 100644
+--- a/target/linux/airoha/Makefile
++++ b/target/linux/airoha/Makefile
+@@ -4,7 +4,7 @@ ARCH:=arm
+ BOARD:=airoha
+ BOARDNAME:=Airoha ARM
+ SUBTARGETS:=en7523 an7581 an7583
+-FEATURES:=dt squashfs nand ramdisk gpio
++FEATURES:=dt squashfs nand separate_ramdisk gpio
+ 
+ KERNEL_PATCHVER:=6.18
+ 
+diff --git a/target/linux/airoha/image/an7581.mk b/target/linux/airoha/image/an7581.mk
+index 9cae328638..51e3496f92 100644
+--- a/target/linux/airoha/image/an7581.mk
++++ b/target/linux/airoha/image/an7581.mk
+@@ -191,6 +191,8 @@ TARGET_DEVICES += nokia_xg-040g-md-ubi
+ 
+ define Device/gemtek_w1701k
+   $(call Device/FitImageLzma)
++  KERNEL_INITRAMFS := kernel-bin | lzma | \
++	fit lzma $$(KDIR)/image-$$(DEVICE_DTS).dtb with-initrd | pad-to 128k
+   DEVICE_VENDOR := Gemtek
+   DEVICE_MODEL := W1701K
+   DEVICE_ALT0_VENDOR := Quantum Fiber
