@@ -1,5 +1,9 @@
 # Gemtek W1701K 可复现固件构建
 
+> 真机已验证的完整刷机、RAM 验收、LuCI 写入 OpenClash 完整版、
+> 无线区域码处理和 Overlay 说明，请查看
+> [W1701K 最终刷机记录](W1701K-FLASH-GUIDE.md)。
+
 本项目保留已验证可启动的 6.12.74 构建，同时新增 6.18.44 实验构建。6.18.44
 版本修复 W1701K 双通道 PCIe 设备树，目标是解决仅枚举 MT7991、MT7990 缺失、
 `PCIe link down` 与 `LTSSM detect.quiet`，并为这台固件生成同一次构建、同一 ABI
