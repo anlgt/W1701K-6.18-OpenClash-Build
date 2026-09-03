@@ -9,6 +9,7 @@
 
 | GitHub Actions 工作流 | 用途 | 包管理 |
 | --- | --- | --- |
+| `Build W1701K 6.18.44 Lite (No OpenClash)` | TFTP 更稳定的精简版；保留管理界面和硬件功能 | APK，同一次构建的签名仓库 |
 | `Build W1701K 6.18.44 Wi-Fi Fix` | 推荐先做 RAM 验证；通过后再正式刷写 | APK，同一次构建的签名仓库 |
 | `Build W1701K 6.12 OpenClash` | 已知可启动的回退方案 | opkg，同一次构建的离线 IPK |
 
@@ -98,6 +99,10 @@ w1701k-hwcheck
 
 任何一项 FAIL 都不要刷 BIN。保存完整输出用于修复构建。
 
+如果完整版 ITB 因 TFTP 不稳定而无法传完，优先使用 Lite 工作流产物。Lite 版删除
+OpenClash、Mihomo、Ruby、Bash 与代理专用内核模块，但仍保留中文 LuCI、Argon、
+UPnP、irqbalance、SoC Status、FlowSense、Fan Control、Wi-Fi 7 与 MLO。
+
 ## RAM 验收通过后正式刷写
 
 把 BIN 放到 TFTP 目录，在 RAM 系统中下载并核对 Release 中的 SHA-256：
@@ -132,7 +137,9 @@ Snapshot 仓库。
 ## 文件说明
 
 - `.github/workflows/build-6.18.yml`：6.18.44 双镜像及签名 APK 仓库构建。
+- `.github/workflows/build-6.18-lite.yml`：不含 OpenClash 的小体积双镜像构建。
 - `w1701k-6.18-openclash.config`：6.18 功能与依赖配置。
+- `w1701k-6.18-lite.config`：6.18 Lite 功能与依赖配置。
 - `patches/001-w1701k-pcie-x2-6.18.patch`：W1701K PCIe x2 修复。
 - `patches/002-w1701k-app-compat.patch`：FlowSense 与 Fan Control 的 W1701K 适配。
 - `patches/003-w1701k-separate-initramfs.patch`：为 RAM 测试使用独立压缩 initrd。
