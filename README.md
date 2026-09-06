@@ -6,15 +6,16 @@
 
 本项目保留已验证可启动的 6.12.74 构建，同时新增 6.18.44 实验构建。6.18.44
 版本修复 W1701K 双通道 PCIe 设备树，目标是解决仅枚举 MT7991、MT7990 缺失、
-`PCIe link down` 与 `LTSSM detect.quiet`，并为这台固件生成同一次构建、同一 ABI
-的签名 APK 软件仓库。
+`PCIe link down` 与 `LTSSM detect.quiet`。推荐的 Hybrid 工作流在同一次构建中
+生成小体积 RAM 测试 ITB 和带 OpenClash 的正式刷机 BIN，不发布 APK 安装包。
 
-## 两种构建
+## 构建方式
 
 | GitHub Actions 工作流 | 用途 | 包管理 |
 | --- | --- | --- |
+| `Build W1701K 6.18.44 Hybrid (Lite RAM + OpenClash Flash)` | **推荐**；Lite ITB 做 RAM 验收，完整版 BIN 正式刷写 | 不发布 APK 仓库 |
 | `Build W1701K 6.18.44 Lite (No OpenClash)` | TFTP 更稳定的精简版；保留管理界面和硬件功能 | APK，同一次构建的签名仓库 |
-| `Build W1701K 6.18.44 Wi-Fi Fix` | 推荐先做 RAM 验证；通过后再正式刷写 | APK，同一次构建的签名仓库 |
+| `Build W1701K 6.18.44 Wi-Fi Fix` | 旧版完整双镜像构建 | APK，同一次构建的签名仓库 |
 | `Build W1701K 6.12 OpenClash` | 已知可启动的回退方案 | opkg，同一次构建的离线 IPK |
 
 6.18.44 仍属于实验版本，不能因为“编译成功”就直接刷入闪存。必须先用 ITB 从
@@ -29,9 +30,11 @@ RAM 启动，并让内置的 `w1701k-hwcheck` 全部通过。
 - Fan Control 页面；自动风扇服务默认关闭，避免未经验证的 W1700K 曲线接管
   W1701K 风扇。
 - MT7990/MT7991 三频 Wi-Fi 7、EHT、MLO 页面与依赖。
-- initramfs ITB、sysupgrade BIN、manifest、完整配置、源码补丁和签名 APK 仓库。
-  ITB 与正式 BIN 来自同一源码、内核版本和驱动配置，并把临时
-  根文件系统作为独立 XZ initrd 打包。
+- Hybrid 产出 initramfs ITB、sysupgrade BIN、两份 manifest、完整配置、源码
+  补丁和校验文件；不含 `*.apk`、`packages.adb` 或软件源公钥。
+- ITB 不含 OpenClash、Mihomo、Ruby 和 Bash，以降低 TFTP 传输体积；正式 BIN
+  内置完整 OpenClash。两者来自同一源码并使用完全相同的内核 ABI 与内核模块
+  选择，临时根文件系统作为独立 XZ initrd 打包。
 
 硬件流量卸载保持系统默认。OpenClash 代理流量不能由 Airoha NPU 代跑；只有符合
 条件的直连转发流量才可能进入 PPE/NPU 快速路径。
@@ -49,23 +52,24 @@ RAM 启动，并让内置的 `w1701k-hwcheck` 全部通过。
 
 ## 在 GitHub 上构建
 
-1. 新建一个**公开** GitHub 仓库，把本目录全部文件推送进去。
-2. 打开仓库的 **Actions**，选择 `Build W1701K 6.18.44 Wi-Fi Fix`。
+1. 新建 GitHub 仓库，把本目录全部文件推送进去。
+2. 打开仓库的 **Actions**，选择
+   `Build W1701K 6.18.44 Hybrid (Lite RAM + OpenClash Flash)`。
 3. 点击 **Run workflow**。
 4. 成功后到该次运行的 Artifact 或自动建立的 Pre-release 下载产物。
 
-必须使用公开仓库：固件内的软件源指向本次 Pre-release 的 `packages.adb`，APK
-文件也是同一 Release 的附件。工作流检测到私有仓库会立即停止，避免生成一个
-设备无法访问的软件源。
+Hybrid 工作流不会覆盖固件的软件源配置，也不会把构建产生的 APK 上传到
+Artifact 或 Release。自定义内核的 `kmod-*` 必须与本固件 ABI 一致，不要从其他
+OpenWrt/ImmortalWrt Snapshot 软件源强制安装。
 
 ## 产物
 
 - `*gemtek_w1701k-initramfs-uImage.itb`：U-Boot RAM 测试镜像，不写闪存。
 - `*gemtek_w1701k-squashfs-sysupgrade.bin`：RAM 验收通过后才可正式刷写。
-- `*gemtek_w1701k.manifest`：固件内置软件清单。
-- `packages.adb`、`*.apk`、`public-key.pem`：与固件完全匹配的签名软件仓库。
+- `*sysupgrade-openclash.manifest`：正式 BIN 的内置软件清单。
+- `*initramfs-lite.manifest`：Lite ITB 的内置软件清单。
 - `SHA256SUMS`：所有发布文件的校验值。
-- `resolved-6.18.config`、diffconfig 与已应用补丁：构建记录。
+- 两套 `resolved-6.18-*.config`、diffconfig、内核 ABI 比对与已应用补丁：构建记录。
 
 ## 先做 U-Boot RAM 测试
 
@@ -103,9 +107,10 @@ w1701k-hwcheck
 
 任何一项 FAIL 都不要刷 BIN。保存完整输出用于修复构建。
 
-如果完整版 ITB 因 TFTP 不稳定而无法传完，优先使用 Lite 工作流产物。Lite 版删除
-OpenClash、Mihomo、Ruby、Bash 与代理专用内核模块，但仍保留中文 LuCI、Argon、
-UPnP、irqbalance、SoC Status、FlowSense、Fan Control、Wi-Fi 7 与 MLO。
+Hybrid 的 ITB 本身就是 Lite RAM 版：删除 OpenClash、Mihomo、Ruby 与 Bash，
+但仍保留中文 LuCI、Argon、UPnP、irqbalance、SoC Status、FlowSense、Fan
+Control、Wi-Fi 7 与 MLO。为保证与正式 BIN 使用同一 ABI，代理相关内核模块仍
+保留在 ITB 中。
 
 ## RAM 验收通过后正式刷写
 
@@ -125,22 +130,17 @@ sysupgrade -n /tmp/w1701k-sysupgrade.bin
 并且不保留旧配置。不要使用 `-F`，不要把 initramfs ITB 写入闪存，也不要使用
 W1700K 的镜像。
 
-## 软件包更新
+## 软件包说明
 
-6.18 固件启动后可检查固定的软件源并更新索引：
-
-```sh
-cat /etc/apk/repositories.d/distfeeds.list
-apk update
-```
-
-只安装这个固定 Release 中提供的包，特别是 `kmod-*`。删除该 GitHub Release 会
-让固件的软件源失效，因此还应保留完整的 Actions Artifact。不要改用官方滚动
-Snapshot 仓库。
+Hybrid Release 不提供 APK 安装包或与自定义内核配套的软件仓库。常用功能应在
+构建配置中选入固件后重新构建；尤其不要安装来自其他内核 ABI 的 `kmod-*`。
 
 ## 文件说明
 
-- `.github/workflows/build-6.18.yml`：6.18.44 双镜像及签名 APK 仓库构建。
+- `.github/workflows/build-6.18-hybrid.yml`：推荐的 Lite RAM ITB + OpenClash
+  正式 BIN 组合构建，不发布 APK。
+- `w1701k-6.18-hybrid-initramfs.config`：Hybrid 中的 Lite RAM 根文件系统配置。
+- `.github/workflows/build-6.18.yml`：旧版 6.18.44 双镜像及签名 APK 仓库构建。
 - `.github/workflows/build-6.18-lite.yml`：不含 OpenClash 的小体积双镜像构建。
 - `w1701k-6.18-openclash.config`：6.18 功能与依赖配置。
 - `w1701k-6.18-lite.config`：6.18 Lite 功能与依赖配置。

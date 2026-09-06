@@ -1,0 +1,456 @@
+name: Build W1701K 6.18.44 Hybrid (Lite RAM + OpenClash Flash)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: w1701k-6.18-hybrid-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  SOURCE_URL: https://github.com/OpenWRT-fanboy/OpenW1700k.git
+  SOURCE_COMMIT: 465633077348b8015e5282193af2b9427b6a8b78
+  APP_PACK_COMMIT: 38be3a4a0b66ccbb4311a12ad0890de571a0fcce
+  PACKAGES_COMMIT: fbde5d1e31608aa13ad779f97da793e841bc214f
+  LUCI_COMMIT: 506ca606d379dd69e9826b2a5e7e2ab90e6b89a5
+  ROUTING_COMMIT: 4b9891b9136259f93294a424507ed24c5e8c1cbd
+  OPENCLASH_TAG: v0.47.156
+  OPENCLASH_COMMIT: c3a33c1d3407956fdf8f0e0b7c1a4c52e6ad9593
+  ARGON_THEME_COMMIT: 2a28799ca063aba7edc3314143b93c8325c86df4
+  ARGON_CONFIG_COMMIT: 3e099a37c3f71d0de677f1b6b0f4bffd57d91dac
+  MIHOMO_TAG: v1.19.30
+  MIHOMO_URL: https://github.com/MetaCubeX/mihomo/releases/download/v1.19.30/mihomo-linux-arm64-v1.19.30.gz
+  MIHOMO_SHA256: 58896873736d28628f66de3677c8654fa0f180662523148e136cff4f6e890069
+  RELEASE_TAG: w1701k-6.18.44-hybrid-r${{ github.run_number }}-${{ github.run_attempt }}
+  GH_TOKEN: ${{ github.token }}
+  TZ: Asia/Shanghai
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 350
+
+    steps:
+      - name: Reclaim build space
+        uses: easimon/maximize-build-space@c28619d8999a147d5e09c1199f84ff6af6ad5794
+        with:
+          root-reserve-mb: 6144
+          swap-size-mb: 2048
+          remove-android: true
+          remove-codeql: true
+          remove-docker-images: true
+          remove-dotnet: true
+          remove-haskell: true
+
+      - name: Checkout build definition
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Install build dependencies
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            ack antlr3 asciidoc autoconf automake autopoint binutils bison \
+            build-essential bzip2 ccache clang cmake cpio curl device-tree-compiler \
+            ecj fastjar file flex gawk genisoimage gettext gcc-multilib g++-multilib git \
+            libgnutls28-dev gperf haveged help2man intltool lib32gcc-s1 \
+            libc6-dev-i386 libelf-dev libfuse-dev libglib2.0-dev libgmp3-dev \
+            libltdl-dev libmpc-dev libmpfr-dev libncurses-dev libpython3-dev \
+            libreadline-dev libssl-dev libtool libyaml-dev lld llvm \
+            lrzsz msmtp nano ninja-build p7zip-full patch pkgconf \
+            python3 python3-dev python3-docutils python3-pip python3-ply \
+            python3-pyelftools qemu-utils re2c rename rsync scons squashfs-tools \
+            subversion swig texinfo uglifyjs unzip vim wget xmlto xxd zlib1g-dev zstd
+
+      - name: Fetch the pinned 6.18.44 W1701K source
+        run: |
+          git init openwrt
+          git -C openwrt remote add origin "$SOURCE_URL"
+          git -C openwrt fetch --depth 1 origin "$SOURCE_COMMIT"
+          git -C openwrt checkout --detach FETCH_HEAD
+          test "$(git -C openwrt rev-parse HEAD)" = "$SOURCE_COMMIT"
+          grep -Fqx 'KERNEL_PATCHVER:=6.18' openwrt/target/linux/airoha/Makefile
+          grep -Fqx 'LINUX_VERSION-6.18 = .44' openwrt/target/linux/generic/kernel-6.18
+
+          # Refuse the later branch head that forces performance mode and +200 MHz.
+          grep -Fqx 'CONFIG_CPU_FREQ_DEFAULT_GOV_ONDEMAND=y' \
+            openwrt/target/linux/airoha/an7581/config-6.18
+          grep -q 'opp-500000000' openwrt/target/linux/airoha/dts/an7581.dtsi
+          if grep -q 'opp-1400000000' openwrt/target/linux/airoha/dts/an7581.dtsi; then
+            echo "::error::Unexpected forced-overclock source"
+            exit 1
+          fi
+
+      - name: Import the W1700K reference application pack
+        working-directory: openwrt
+        run: |
+          git fetch --depth 1 origin "$APP_PACK_COMMIT"
+          app_paths=(
+            package/luci-app-airoha-flowsense
+            package/luci-app-airoha-npu
+            package/luci-app-w1700k-fancontrol
+            package/luci-app-mlo
+            package/luci-app-wifi7
+          )
+          git restore --source="$APP_PACK_COMMIT" --staged --worktree -- "${app_paths[@]}"
+          grep -Fqx 'PKG_VERSION:=1.1.7' package/luci-app-airoha-flowsense/Makefile
+
+      - name: Apply and verify W1701K compatibility fixes
+        working-directory: openwrt
+        run: |
+          git apply --check ../patches/001-w1701k-pcie-x2-6.18.patch
+          git apply ../patches/001-w1701k-pcie-x2-6.18.patch
+          git apply --check ../patches/002-w1701k-app-compat.patch
+          git apply ../patches/002-w1701k-app-compat.patch
+          git apply --check ../patches/003-w1701k-separate-initramfs.patch
+          git apply ../patches/003-w1701k-separate-initramfs.patch
+          git apply --check ../patches/004-w1701k-image-safety.patch
+          git apply ../patches/004-w1701k-image-safety.patch
+          git diff --check
+
+          dts=target/linux/airoha/dts/an7581-w1701k.dts
+          grep -Fq 'reg-names = "pcie-mac", "sec-pcie-mac";' "$dts"
+          grep -Fq 'num-lanes = <2>;' "$dts"
+          grep -Fq 'airoha,scu = <&scuclk>;' "$dts"
+          if grep -Fq 'airoha,x2-mode;' "$dts"; then
+            echo "::error::Obsolete PCIe x2 property survived the patch"
+            exit 1
+          fi
+          grep -Fq 'FEATURES:=dt squashfs nand separate_ramdisk gpio' \
+            target/linux/airoha/Makefile
+          grep -Fq 'DEVICE_DTS := an7581-w1701k' \
+            target/linux/airoha/image/an7581.mk
+          grep -Fq 'with-initrd | pad-to 128k' \
+            target/linux/airoha/image/an7581.mk
+          grep -Fq 'KERNEL_SIZE := 16384k' \
+            target/linux/airoha/image/an7581.mk
+          if grep -Fq 'kmod-i2c-an7581' target/linux/airoha/image/an7581.mk; then
+            echo "::error::Nonexistent W1701K I2C package survived the patch"
+            exit 1
+          fi
+
+          sh -n package/luci-app-w1700k-fancontrol/root/etc/init.d/fan
+          sh -n package/luci-app-w1700k-fancontrol/root/usr/libexec/rpcd/luci.fan
+          sh -n package/luci-app-airoha-flowsense/root/usr/libexec/rpcd/luci.airoha_flowsense
+          node --check package/luci-app-w1700k-fancontrol/htdocs/luci-static/resources/view/fan/status.js
+          node --check package/luci-app-airoha-flowsense/htdocs/luci-static/resources/view/airoha_flowsense/status.js
+          git diff HEAD --binary > ../source-patches-applied.diff
+
+      - name: Pin feeds and third-party LuCI packages
+        working-directory: openwrt
+        run: |
+          printf '%s\n' \
+            "src-git packages https://github.com/openwrt/packages.git^$PACKAGES_COMMIT" \
+            "src-git luci https://github.com/openwrt/luci.git^$LUCI_COMMIT" \
+            "src-git routing https://github.com/openwrt/routing.git^$ROUTING_COMMIT" \
+            > feeds.conf
+          ./scripts/feeds update -a
+          test "$(git -C feeds/packages rev-parse HEAD)" = "$PACKAGES_COMMIT"
+          test "$(git -C feeds/luci rev-parse HEAD)" = "$LUCI_COMMIT"
+          test "$(git -C feeds/routing rev-parse HEAD)" = "$ROUTING_COMMIT"
+          ./scripts/feeds install -a
+
+          clone_pinned() {
+            repo_url="$1"
+            repo_commit="$2"
+            destination="$3"
+            git init "$destination"
+            git -C "$destination" remote add origin "$repo_url"
+            git -C "$destination" fetch --depth 1 origin "$repo_commit"
+            git -C "$destination" checkout --detach FETCH_HEAD
+            test "$(git -C "$destination" rev-parse HEAD)" = "$repo_commit"
+          }
+
+          clone_pinned https://github.com/vernesong/OpenClash.git \
+            "$OPENCLASH_COMMIT" package/OpenClash
+          grep -Fqx 'PKG_VERSION:=0.47.156' \
+            package/OpenClash/luci-app-openclash/Makefile
+
+          clone_pinned https://github.com/jerrykuku/luci-theme-argon.git \
+            "$ARGON_THEME_COMMIT" package/extra/luci-theme-argon
+          clone_pinned https://github.com/jerrykuku/luci-app-argon-config.git \
+            "$ARGON_CONFIG_COMMIT" package/extra/luci-app-argon-config
+
+      - name: Bundle the verified ARM64 Mihomo core
+        working-directory: openwrt
+        run: |
+          curl -fL --retry 5 --retry-all-errors --connect-timeout 20 \
+            "$MIHOMO_URL" -o /tmp/mihomo-arm64.gz
+          echo "$MIHOMO_SHA256  /tmp/mihomo-arm64.gz" | sha256sum -c -
+          gzip -t /tmp/mihomo-arm64.gz
+          install -d package/OpenClash/luci-app-openclash/root/etc/openclash/core
+          gzip -dc /tmp/mihomo-arm64.gz \
+            > package/OpenClash/luci-app-openclash/root/etc/openclash/core/clash_meta
+          chmod 0755 package/OpenClash/luci-app-openclash/root/etc/openclash/core/clash_meta
+          file package/OpenClash/luci-app-openclash/root/etc/openclash/core/clash_meta \
+            | grep -q 'ARM aarch64'
+
+      - name: Add defaults and hardware checker
+        run: |
+          install -d openwrt/files
+          cp -a files/. openwrt/files/
+          chmod 0755 \
+            openwrt/files/etc/uci-defaults/99-w1701k-custom-defaults \
+            openwrt/files/usr/bin/w1701k-hwcheck
+
+          printf '%s\n' \
+            "W1701K custom build" \
+            "source=$SOURCE_URL" \
+            "source_commit=$SOURCE_COMMIT" \
+            "app_pack_commit=$APP_PACK_COMMIT" \
+            "kernel=6.18.44" \
+            "openclash=$OPENCLASH_TAG" \
+            "mihomo=$MIHOMO_TAG" \
+            "flavour=hybrid-lite-ram-openclash-flash" \
+            "matching_apk_repository=not-published" \
+            > openwrt/files/etc/w1701k-build-info
+
+      - name: Configure the full OpenClash flash image
+        run: |
+          cp w1701k-6.18-openclash.config openwrt/.config
+          cd openwrt
+          make defconfig
+
+          required_packages='apk-openssl luci luci-app-package-manager luci-i18n-base-zh-cn luci-app-upnp luci-theme-argon luci-app-openclash luci-compat bash curl dnsmasq-full ip-full kmod-inet-diag kmod-nft-tproxy kmod-tun ruby ruby-yaml unzip irqbalance luci-app-irqbalance luci-app-airoha-npu luci-app-airoha-flowsense luci-app-w1700k-fancontrol luci-app-wifi7 luci-app-mlo kmod-airoha-eth kmod-airoha-npu airoha-en7581-mt7996-npu-firmware kmod-dsa-mt7530-mmio kmod-phy-airoha-en8811h airoha-en8811h-firmware kmod-hwmon-nct7802 kmod-mt7996e kmod-mt7996-firmware iw hostapd-utils wpad-openssl pciutils'
+          for package_name in $required_packages; do
+            grep -Fqx "CONFIG_PACKAGE_${package_name}=y" .config || {
+              echo "Required full-image package was not selected: $package_name"
+              exit 1
+            }
+          done
+
+          required_symbols='CONFIG_USE_APK=y CONFIG_TARGET_ROOTFS_INITRAMFS=y CONFIG_TARGET_ROOTFS_INITRAMFS_SEPARATE=y CONFIG_TARGET_INITRAMFS_COMPRESSION_XZ=y CONFIG_TARGET_ROOTFS_SQUASHFS=y CONFIG_DRIVER_11BE_SUPPORT=y CONFIG_PACKAGE_dnsmasq_full_nftset=y CONFIG_LIBCURL_TFTP=y'
+          for symbol in $required_symbols; do
+            grep -Fqx "$symbol" .config || {
+              echo "Required full-image configuration was not selected: $symbol"
+              exit 1
+            }
+          done
+
+          cp .config ../resolved-6.18-openclash.config
+          ./scripts/diffconfig.sh > ../resolved-6.18-openclash.diffconfig
+          grep '^CONFIG_PACKAGE_kmod-.*=y$' .config | LC_ALL=C sort \
+            > ../openclash-kmods.txt
+
+      - name: Download sources
+        working-directory: openwrt
+        run: |
+          make download -j8 || true
+          find dl -type f -size -1024c -print -delete
+          make download -j8
+          if find dl -type f -size -1024c -print -quit | grep -q .; then
+            echo "::error::One or more source downloads are still incomplete"
+            exit 1
+          fi
+
+      - name: Build and preserve the full OpenClash sysupgrade
+        working-directory: openwrt
+        run: |
+          make -j"$(nproc)" || make -j1 V=s
+          target_dir=bin/targets/airoha/an7581
+          manifest=$(find "$target_dir" -maxdepth 1 -name '*gemtek_w1701k.manifest' -print -quit)
+          sysupgrade=$(find "$target_dir" -maxdepth 1 -name '*gemtek_w1701k-squashfs-sysupgrade.bin' -print -quit)
+          test -n "$manifest" && test -s "$manifest"
+          test -n "$sysupgrade" && test -s "$sysupgrade"
+
+          required_manifest='luci-app-openclash luci-compat bash curl dnsmasq-full kmod-inet-diag kmod-nft-tproxy kmod-tun ruby ruby-yaml unzip luci-app-upnp luci-theme-argon irqbalance luci-app-airoha-npu luci-app-airoha-flowsense luci-app-w1700k-fancontrol luci-app-wifi7 luci-app-mlo kmod-airoha-eth kmod-airoha-npu airoha-en7581-mt7996-npu-firmware kmod-dsa-mt7530-mmio kmod-phy-airoha-en8811h airoha-en8811h-firmware kmod-hwmon-nct7802 kmod-mt7996e kmod-mt7996-firmware wpad-openssl'
+          for package_name in $required_manifest; do
+            grep -q "^${package_name} - " "$manifest" || {
+              echo "Required package missing from full image: $package_name"
+              exit 1
+            }
+          done
+
+          core_in_root=$(find build_dir -path '*/root-airoha/etc/openclash/core/clash_meta' -print -quit)
+          test -n "$core_in_root" && test -x "$core_in_root"
+          file "$core_in_root" | grep -q 'ARM aarch64'
+
+          mkdir -p ../output/firmware ../output/build-record
+          cp "$sysupgrade" ../output/firmware/
+          cp "$manifest" \
+            ../output/firmware/openwrt-airoha-an7581-gemtek_w1701k-sysupgrade-openclash.manifest
+          grep '^kernel - 6\.18\.44' "$manifest" \
+            > ../output/build-record/openclash-kernel-abi.txt
+
+      - name: Reconfigure the small Lite RAM image
+        run: |
+          cp w1701k-6.18-hybrid-initramfs.config openwrt/.config
+          cd openwrt
+          make defconfig
+
+          required_packages='apk-openssl luci luci-app-package-manager luci-i18n-base-zh-cn luci-app-upnp luci-theme-argon curl dnsmasq ip-full kmod-inet-diag kmod-nft-tproxy kmod-tun irqbalance luci-app-irqbalance luci-app-airoha-npu luci-app-airoha-flowsense luci-app-w1700k-fancontrol luci-app-wifi7 luci-app-mlo kmod-airoha-eth kmod-airoha-npu airoha-en7581-mt7996-npu-firmware kmod-dsa-mt7530-mmio kmod-phy-airoha-en8811h airoha-en8811h-firmware kmod-hwmon-nct7802 kmod-mt7996e kmod-mt7996-firmware iw hostapd-utils wpad-openssl pciutils'
+          for package_name in $required_packages; do
+            grep -Fqx "CONFIG_PACKAGE_${package_name}=y" .config || {
+              echo "Required Lite RAM package was not selected: $package_name"
+              exit 1
+            }
+          done
+
+          forbidden_packages='luci-app-openclash luci-compat bash dnsmasq-full ruby ruby-yaml unzip'
+          for package_name in $forbidden_packages; do
+            if grep -Fqx "CONFIG_PACKAGE_${package_name}=y" .config; then
+              echo "Bulky package unexpectedly selected in Lite RAM image: $package_name"
+              exit 1
+            fi
+          done
+
+          required_symbols='CONFIG_USE_APK=y CONFIG_TARGET_ROOTFS_INITRAMFS=y CONFIG_TARGET_ROOTFS_INITRAMFS_SEPARATE=y CONFIG_TARGET_INITRAMFS_COMPRESSION_XZ=y CONFIG_TARGET_ROOTFS_SQUASHFS=y CONFIG_DRIVER_11BE_SUPPORT=y CONFIG_LIBCURL_TFTP=y'
+          for symbol in $required_symbols; do
+            grep -Fqx "$symbol" .config || {
+              echo "Required Lite RAM configuration was not selected: $symbol"
+              exit 1
+            }
+          done
+
+          cp .config ../resolved-6.18-lite-ram.config
+          ./scripts/diffconfig.sh > ../resolved-6.18-lite-ram.diffconfig
+          grep '^CONFIG_PACKAGE_kmod-.*=y$' .config | LC_ALL=C sort \
+            > ../lite-ram-kmods.txt
+          diff -u ../openclash-kmods.txt ../lite-ram-kmods.txt || {
+            echo "::error::Lite ITB and full BIN would use different kernel-module selections"
+            exit 1
+          }
+
+          target_dir=bin/targets/airoha/an7581
+          rm -f "$target_dir"/*gemtek_w1701k-initramfs-uImage.itb
+
+      - name: Build the small Lite initramfs
+        working-directory: openwrt
+        run: |
+          make -j"$(nproc)" || make -j1 V=s
+
+      - name: Verify and package only the two firmware images
+        run: |
+          target_dir=openwrt/bin/targets/airoha/an7581
+          manifest=$(find "$target_dir" -maxdepth 1 -name '*gemtek_w1701k.manifest' -print -quit)
+          initramfs=$(find "$target_dir" -maxdepth 1 -name '*gemtek_w1701k-initramfs-uImage.itb' -print -quit)
+          sysupgrade=$(find output/firmware -maxdepth 1 -name '*gemtek_w1701k-squashfs-sysupgrade.bin' -print -quit)
+          test -n "$manifest" && test -s "$manifest"
+          test -n "$initramfs" && test -s "$initramfs"
+          test -n "$sysupgrade" && test -s "$sysupgrade"
+
+          required_manifest='curl dnsmasq kmod-inet-diag kmod-nft-tproxy kmod-tun irqbalance luci-app-airoha-npu luci-app-airoha-flowsense luci-app-w1700k-fancontrol luci-app-wifi7 luci-app-mlo kmod-airoha-eth kmod-airoha-npu airoha-en7581-mt7996-npu-firmware kmod-mt7996e kmod-mt7996-firmware wpad-openssl'
+          for package_name in $required_manifest; do
+            grep -q "^${package_name} - " "$manifest" || {
+              echo "Required package missing from Lite RAM image: $package_name"
+              exit 1
+            }
+          done
+
+          forbidden_manifest='luci-app-openclash luci-compat bash dnsmasq-full ruby ruby-yaml unzip'
+          for package_name in $forbidden_manifest; do
+            if grep -q "^${package_name} - " "$manifest"; then
+              echo "Bulky package present in Lite RAM image: $package_name"
+              exit 1
+            fi
+          done
+
+          openwrt/staging_dir/host/bin/mkimage -l "$initramfs" \
+            | tee initramfs-layout.txt
+          grep -q 'Type:[[:space:]]*RAMDisk Image' initramfs-layout.txt
+          grep -q 'Init Ramdisk:' initramfs-layout.txt
+          grep -q 'gemtek_w1701k' initramfs-layout.txt
+
+          initramfs_bytes=$(stat -c '%s' "$initramfs")
+          if [ "$initramfs_bytes" -gt 20971520 ]; then
+            echo "::error::Lite RAM image exceeds the 20 MiB TFTP limit: $initramfs_bytes bytes"
+            exit 1
+          fi
+
+          cp "$initramfs" output/firmware/
+          cp "$manifest" \
+            output/firmware/openwrt-airoha-an7581-gemtek_w1701k-initramfs-lite.manifest
+          grep '^kernel - 6\.18\.44' "$manifest" \
+            > output/build-record/lite-ram-kernel-abi.txt
+          cmp output/build-record/openclash-kernel-abi.txt \
+            output/build-record/lite-ram-kernel-abi.txt || {
+            echo "::error::Lite ITB and full BIN do not have the exact same kernel ABI"
+            exit 1
+          }
+
+          cp resolved-6.18-openclash.config resolved-6.18-openclash.diffconfig \
+            resolved-6.18-lite-ram.config resolved-6.18-lite-ram.diffconfig \
+            openclash-kmods.txt lite-ram-kmods.txt source-patches-applied.diff \
+            initramfs-layout.txt output/build-record/
+          for extra in profiles.json feeds.buildinfo version.buildinfo; do
+            [ ! -f "$target_dir/$extra" ] || cp "$target_dir/$extra" output/build-record/
+          done
+
+          printf '%s\n' \
+            "Release: $RELEASE_TAG" \
+            "Source commit: $SOURCE_COMMIT" \
+            "Kernel: 6.18.44" \
+            "OpenClash flash image: $OPENCLASH_TAG with Mihomo $MIHOMO_TAG" \
+            "Lite RAM image: no OpenClash, Mihomo, Ruby or Bash" \
+            "Lite RAM bytes: $initramfs_bytes" \
+            "Kernel ABI: $(cat output/build-record/openclash-kernel-abi.txt)" \
+            "APK release assets: none" \
+            > output/build-record/release-info.txt
+
+          image_count=$(find output/firmware -maxdepth 1 -type f \
+            \( -name '*.itb' -o -name '*.bin' \) | wc -l)
+          test "$image_count" -eq 2
+          if find output -type f \( -name '*.apk' -o -name 'packages.adb' \) \
+            -print -quit | grep -q .; then
+            echo "::error::APK packages or an APK index leaked into the published output"
+            exit 1
+          fi
+
+          (
+            cd output
+            find firmware build-record -type f \
+              -exec sha256sum '{}' + | sort -k2 > SHA256SUMS
+            awk '{ name=$2; sub(/^.*\//, "", name); print $1 "  " name }' \
+              SHA256SUMS | sort -k2 > RELEASE-SHA256SUMS
+          )
+
+      - name: Upload firmware-only build artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: W1701K-6.18.44-Hybrid-${{ github.run_number }}-${{ github.run_attempt }}
+          path: output/
+          retention-days: 90
+          compression-level: 0
+
+      - name: Publish Lite RAM ITB and full OpenClash sysupgrade
+        run: |
+          printf '%s\n' \
+            '## W1701K 6.18.44 hybrid build' \
+            '' \
+            '- `initramfs-uImage.itb` is the small Lite RAM-test image without OpenClash, Mihomo, Ruby or Bash.' \
+            '- `squashfs-sysupgrade.bin` is the full flash image with OpenClash, its ARM64 Mihomo core and proxy dependencies.' \
+            '- Both images are produced from the same pinned source and have an exactly matching kernel ABI and kernel-module selection.' \
+            '- Chinese LuCI, Argon, UPnP, irqbalance, SoC Status, FlowSense, Fan Control, Wi-Fi 7 and MLO remain in both images.' \
+            '- This release intentionally publishes no APK files and no `packages.adb` repository.' \
+            '- Fan control is installed but disabled until its W1701K curve is validated.' \
+            '' \
+            '**RAM-boot the ITB at `0x91000000`, run `w1701k-hwcheck`, and flash the BIN only after every check passes.**' \
+            > release-notes.md
+
+          gh release create "$RELEASE_TAG" \
+            --title "W1701K 6.18.44 Hybrid (Lite RAM + OpenClash Flash)" \
+            --notes-file release-notes.md \
+            --target "$GITHUB_SHA" \
+            --draft
+
+          find output/firmware output/build-record -type f -print0 \
+            | xargs -0 -n 50 gh release upload "$RELEASE_TAG" --clobber
+          gh release upload "$RELEASE_TAG" output/RELEASE-SHA256SUMS --clobber
+
+          find output/firmware output/build-record -type f -printf '%f\n' \
+            | LC_ALL=C sort > expected-assets.txt
+          basename output/RELEASE-SHA256SUMS >> expected-assets.txt
+          LC_ALL=C sort -o expected-assets.txt expected-assets.txt
+          gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name' \
+            | LC_ALL=C sort > uploaded-assets.txt
+          diff -u expected-assets.txt uploaded-assets.txt
+          if grep -Eq '\.apk$|^packages\.adb$' uploaded-assets.txt; then
+            echo "::error::APK output was unexpectedly uploaded"
+            exit 1
+          fi
+
+          gh release edit "$RELEASE_TAG" --draft=false --prerelease
