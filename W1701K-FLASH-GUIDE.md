@@ -58,24 +58,28 @@ SHA256：36034dfc2a67e2f035d2712cb11c90601a49e80cac422124127418cccdc65d1a
 
 ### 4.2 每次刷机用的 Lite RAM 启动镜像
 
-- [W1701K 6.18.44 Lite initramfs ITB](https://github.com/anlgt/W1701K-6.18-OpenClash-Build/releases/download/w1701k-6.18.44-lite-r1-1/openwrt-airoha-an7581-gemtek_w1701k-initramfs-uImage.itb)
+- [W1701K 6.18.44 Hybrid Lite initramfs ITB](https://github.com/anlgt/W1701K-6.18-OpenClash-Build/releases/download/w1701k-6.18.44-hybrid-r2-1/openwrt-airoha-an7581-gemtek_w1701k-initramfs-uImage.itb)
 
 ```text
 文件：openwrt-airoha-an7581-gemtek_w1701k-initramfs-uImage.itb
 大小：15204352 bytes（0xe80000，14.50 MiB）
-SHA256：f73147586374b7e9a2c7b6f880fb3952c18f4bff9c73ebe447ff4b3dcf582852
+SHA256：c71ad3a32e92bdf0227c301d98ec9e072d780db9b0ee34085df8b80bd3283a74
 ```
 
 ### 4.3 最终写入闪存的 OpenClash 完整版
 
-- [W1701K 6.18.44 OpenClash sysupgrade BIN](https://github.com/anlgt/W1701K-6.18-OpenClash-Build/releases/download/w1701k-6.18.44-r2-1/openwrt-airoha-an7581-gemtek_w1701k-squashfs-sysupgrade.bin)
-- [完整版 Release 和所有校验文件](https://github.com/anlgt/W1701K-6.18-OpenClash-Build/releases/tag/w1701k-6.18.44-r2-1)
+- [W1701K 6.18.44 Hybrid OpenClash sysupgrade BIN](https://github.com/anlgt/W1701K-6.18-OpenClash-Build/releases/download/w1701k-6.18.44-hybrid-r2-1/openwrt-airoha-an7581-gemtek_w1701k-squashfs-sysupgrade.bin)
+- [同一 Hybrid Release 和所有校验文件](https://github.com/anlgt/W1701K-6.18-OpenClash-Build/releases/tag/w1701k-6.18.44-hybrid-r2-1)
 
 ```text
 文件：openwrt-airoha-an7581-gemtek_w1701k-squashfs-sysupgrade.bin
 大小：38953217 bytes（37.15 MiB）
-SHA256：ebde09bee4b3ec873849eec10fd7c6edaf48241fa2dfd350c23b3ea423f7ebf3
+SHA256：6398da29fdc27dd929b14b864e04ea38c5ba86c82e83b3654c71ccf75f2f207d
 ```
+
+这两个镜像来自同一次构建并通过内核 ABI、全部内核模块选择一致性检查。
+Release 有意不提供 `.apk` 或 `packages.adb`；正式 BIN 已直接内置 OpenClash
+及所需依赖。
 
 ## 5. 准备 Windows 网络和 TFTP
 
@@ -241,7 +245,7 @@ mtdblock：
 3. 对照 LuCI 显示的 SHA256：
 
    ```text
-   ebde09bee4b3ec873849eec10fd7c6edaf48241fa2dfd350c23b3ea423f7ebf3
+   6398da29fdc27dd929b14b864e04ea38c5ba86c82e83b3654c71ccf75f2f207d
    ```
 
 4. **取消勾选“保留配置”**。
@@ -281,7 +285,7 @@ w1701k-hwcheck
 - `w1701k-hwcheck` 仍以 `PASS` 结束。
 - LuCI 中已存在 OpenClash、irqbalance、SoC Status、FlowSense、Fan Control、
   Wi-Fi 7 和 MLO。
-- 固件使用与当前内核 ABI 完全匹配的签名 APK 软件源。
+- OpenClash 及依赖已经内置；本 Hybrid Release 不提供额外 APK 软件仓库。
 
 ## 11. 首次无线设置的已知注意事项
 
@@ -410,4 +414,3 @@ logread | grep -Ei 'hostapd|netifd|mt7996|nl80211|wireless' | tail -120
 4. RAM OpenWrt 中运行 `w1701k-hwcheck`，必须为 PASS。
 5. LuCI 上传完整版 `sysupgrade.bin`，取消保留配置，不强制。
 6. 等待自动重启，验证内核、Wi-Fi、NPU/PPE、风扇、OpenClash 和 Overlay。
-
