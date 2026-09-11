@@ -1,0 +1,339 @@
+name: Build XR1710G 6.18.44 Minimal OpenClash Sysupgrade
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/build-xr1710g-6.18.yml
+      - xr1710g-6.18-openclash.config
+      - xr1710g-files/**
+
+permissions:
+  contents: write
+
+concurrency:
+  group: xr1710g-6.18-openclash-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  SOURCE_URL: https://github.com/YYH2913/openwrt.git
+  SOURCE_COMMIT: c82129e7348fda30b9e2f90572e4f1b3c555c7f2
+  PACKAGES_COMMIT: 1c2ce769a8a87cc41caf23397628b1eaa8875c82
+  LUCI_COMMIT: 6e1eb21fae71304965621cc7df93259a18a3a93e
+  ROUTING_COMMIT: 4b9891b9136259f93294a424507ed24c5e8c1cbd
+  OPENCLASH_TAG: v0.47.156
+  OPENCLASH_COMMIT: c3a33c1d3407956fdf8f0e0b7c1a4c52e6ad9593
+  ARGON_THEME_COMMIT: 2a28799ca063aba7edc3314143b93c8325c86df4
+  ARGON_CONFIG_COMMIT: 3e099a37c3f71d0de677f1b6b0f4bffd57d91dac
+  MIHOMO_TAG: v1.19.30
+  MIHOMO_URL: https://github.com/MetaCubeX/mihomo/releases/download/v1.19.30/mihomo-linux-arm64-v1.19.30.gz
+  MIHOMO_SHA256: 58896873736d28628f66de3677c8654fa0f180662523148e136cff4f6e890069
+  RELEASE_TAG: xr1710g-6.18.44-openclash-r${{ github.run_number }}-${{ github.run_attempt }}
+  GH_TOKEN: ${{ github.token }}
+  TZ: Asia/Shanghai
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 350
+
+    steps:
+      - name: Reclaim build space
+        uses: easimon/maximize-build-space@c28619d8999a147d5e09c1199f84ff6af6ad5794
+        with:
+          root-reserve-mb: 6144
+          swap-size-mb: 2048
+          remove-android: true
+          remove-codeql: true
+          remove-docker-images: true
+          remove-dotnet: true
+          remove-haskell: true
+
+      - name: Checkout build definition
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Install build dependencies
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            ack antlr3 asciidoc autoconf automake autopoint binutils bison \
+            build-essential bzip2 ccache clang cmake cpio curl device-tree-compiler \
+            ecj fastjar file flex gawk genisoimage gettext gcc-multilib g++-multilib git \
+            libgnutls28-dev gperf haveged help2man intltool lib32gcc-s1 \
+            libc6-dev-i386 libelf-dev libfuse-dev libglib2.0-dev libgmp3-dev \
+            libltdl-dev libmpc-dev libmpfr-dev libncurses-dev libpython3-dev \
+            libreadline-dev libssl-dev libtool libyaml-dev lld llvm \
+            lrzsz msmtp nano ninja-build p7zip-full patch pkgconf \
+            python3 python3-dev python3-docutils python3-pip python3-ply \
+            python3-pyelftools qemu-utils re2c rename rsync scons squashfs-tools \
+            subversion swig texinfo uglifyjs unzip vim wget xmlto xxd zlib1g-dev zstd
+
+      - name: Fetch the verified XR1710G source
+        run: |
+          git init openwrt
+          git -C openwrt remote add origin "$SOURCE_URL"
+          git -C openwrt fetch --depth 1 origin "$SOURCE_COMMIT"
+          git -C openwrt checkout --detach FETCH_HEAD
+          test "$(git -C openwrt rev-parse HEAD)" = "$SOURCE_COMMIT"
+
+          grep -Fqx 'KERNEL_PATCHVER:=6.18' openwrt/target/linux/airoha/Makefile
+          grep -Fqx 'LINUX_VERSION-6.18 = .44' openwrt/target/linux/generic/kernel-6.18
+          grep -Fq 'define Device/gemtek_xr1710g-ubi' \
+            openwrt/target/linux/airoha/image/an7581.mk
+          grep -Fq 'compatible = "gemtek,xr1710g-ubi"' \
+            openwrt/target/linux/airoha/dts/an7581-xr1710g-ubi.dts
+          grep -Fq 'DEVICE_COMPAT_VERSION := 2.0' \
+            openwrt/target/linux/airoha/image/an7581.mk
+          grep -Fq 'IMAGE/sysupgrade.itb := append-kernel' \
+            openwrt/target/linux/airoha/image/an7581.mk
+
+      - name: Pin feeds and third-party LuCI packages
+        working-directory: openwrt
+        run: |
+          printf '%s\n' \
+            "src-git packages https://github.com/openwrt/packages.git^$PACKAGES_COMMIT" \
+            "src-git luci https://github.com/openwrt/luci.git^$LUCI_COMMIT" \
+            "src-git routing https://github.com/openwrt/routing.git^$ROUTING_COMMIT" \
+            > feeds.conf
+          ./scripts/feeds update -a
+          test "$(git -C feeds/packages rev-parse HEAD)" = "$PACKAGES_COMMIT"
+          test "$(git -C feeds/luci rev-parse HEAD)" = "$LUCI_COMMIT"
+          test "$(git -C feeds/routing rev-parse HEAD)" = "$ROUTING_COMMIT"
+          ./scripts/feeds install -a
+
+          clone_pinned() {
+            repo_url="$1"
+            repo_commit="$2"
+            destination="$3"
+            git init "$destination"
+            git -C "$destination" remote add origin "$repo_url"
+            git -C "$destination" fetch --depth 1 origin "$repo_commit"
+            git -C "$destination" checkout --detach FETCH_HEAD
+            test "$(git -C "$destination" rev-parse HEAD)" = "$repo_commit"
+          }
+
+          clone_pinned https://github.com/vernesong/OpenClash.git \
+            "$OPENCLASH_COMMIT" package/OpenClash
+          grep -Fqx 'PKG_VERSION:=0.47.156' \
+            package/OpenClash/luci-app-openclash/Makefile
+
+          clone_pinned https://github.com/jerrykuku/luci-theme-argon.git \
+            "$ARGON_THEME_COMMIT" package/extra/luci-theme-argon
+          clone_pinned https://github.com/jerrykuku/luci-app-argon-config.git \
+            "$ARGON_CONFIG_COMMIT" package/extra/luci-app-argon-config
+
+      - name: Bundle the verified ARM64 Mihomo core
+        working-directory: openwrt
+        run: |
+          curl -fL --retry 5 --retry-all-errors --connect-timeout 20 \
+            "$MIHOMO_URL" -o /tmp/mihomo-arm64.gz
+          echo "$MIHOMO_SHA256  /tmp/mihomo-arm64.gz" | sha256sum -c -
+          gzip -t /tmp/mihomo-arm64.gz
+          install -d package/OpenClash/luci-app-openclash/root/etc/openclash/core
+          gzip -dc /tmp/mihomo-arm64.gz \
+            > package/OpenClash/luci-app-openclash/root/etc/openclash/core/clash_meta
+          chmod 0755 package/OpenClash/luci-app-openclash/root/etc/openclash/core/clash_meta
+          file package/OpenClash/luci-app-openclash/root/etc/openclash/core/clash_meta \
+            | grep -q 'ARM aarch64'
+
+      - name: Add XR1710G defaults and build record
+        run: |
+          install -d openwrt/files
+          cp -a xr1710g-files/. openwrt/files/
+          chmod 0755 openwrt/files/etc/uci-defaults/99-xr1710g-custom-defaults
+
+          printf '%s\n' \
+            'XR1710G minimal OpenClash build' \
+            "source=$SOURCE_URL" \
+            "source_commit=$SOURCE_COMMIT" \
+            'kernel=6.18.44' \
+            "openclash=$OPENCLASH_TAG" \
+            "mihomo=$MIHOMO_TAG" \
+            'themes=argon-only' \
+            'wireguard=not-included' \
+            'matching_apk_repository=not-published' \
+            > openwrt/files/etc/xr1710g-build-info
+
+      - name: Configure the minimal XR1710G image
+        run: |
+          cp xr1710g-6.18-openclash.config openwrt/.config
+          cd openwrt
+          make defconfig
+
+          required_packages='apk-mbedtls luci-base luci-mod-admin-full luci-app-firewall luci-compat luci-i18n-base-zh-cn luci-theme-argon luci-app-argon-config luci-i18n-argon-config-zh-cn luci-app-openclash bash ca-bundle curl dnsmasq-full ip-full kmod-inet-diag kmod-nft-tproxy kmod-tun ruby ruby-yaml unzip luci-app-upnp miniupnpd-nftables irqbalance luci-app-irqbalance btop coreutils-nohup etherwake luci-app-airoha-npu luci-app-w1700k-fancontrol airoha-en7581-mt7996-npu-firmware fitblk kmod-hwmon-nct7802 kmod-mt7996-firmware kmod-phy-realtek rtl826x-firmware wpad-basic-mbedtls'
+          for package_name in $required_packages; do
+            grep -Fqx "CONFIG_PACKAGE_${package_name}=y" .config || {
+              echo "Required package was not selected: $package_name"
+              exit 1
+            }
+          done
+
+          required_symbols='CONFIG_USE_APK=y CONFIG_TARGET_ROOTFS_SQUASHFS=y CONFIG_BUSYBOX_CONFIG_DEVMEM=y CONFIG_DRIVER_11BE_SUPPORT=y CONFIG_PACKAGE_dnsmasq_full_nftset=y'
+          for symbol in $required_symbols; do
+            grep -Fqx "$symbol" .config || {
+              echo "Required configuration was not selected: $symbol"
+              exit 1
+            }
+          done
+
+          forbidden_packages='luci-theme-bootstrap luci-theme-glass luci-app-package-manager luci-app-airoha-flowsense luci-app-mlo luci-i18n-glass-zh-cn luci-i18n-mlo-zh-cn ethtool-full iperf3 kmod-airoha-net-debug mdio-tools openssh-sftp-server phytool tcpdump kmod-wireguard wireguard-tools luci-proto-wireguard'
+          for package_name in $forbidden_packages; do
+            if grep -Fqx "CONFIG_PACKAGE_${package_name}=y" .config; then
+              echo "Forbidden package was selected: $package_name"
+              exit 1
+            fi
+          done
+
+          if grep -Fq 'CONFIG_TARGET_ROOTFS_INITRAMFS=y' .config; then
+            echo 'Initramfs was unexpectedly enabled'
+            exit 1
+          fi
+
+          cp .config ../resolved-xr1710g-6.18-openclash.config
+          ./scripts/diffconfig.sh > ../resolved-xr1710g-6.18-openclash.diffconfig
+
+      - name: Download sources
+        working-directory: openwrt
+        run: |
+          make download -j8 || true
+          find dl -type f -size -1024c -print -delete
+          make download -j8
+          if find dl -type f -size -1024c -print -quit | grep -q .; then
+            echo 'One or more source downloads are still incomplete'
+            exit 1
+          fi
+
+      - name: Build the XR1710G sysupgrade
+        working-directory: openwrt
+        run: |
+          make -j"$(nproc)" || make -j1 V=s
+
+      - name: Verify and package the firmware
+        run: |
+          target_dir=openwrt/bin/targets/airoha/an7581
+          manifest=$(find "$target_dir" -maxdepth 1 \
+            -name '*gemtek_xr1710g-ubi.manifest' -print -quit)
+          sysupgrade=$(find "$target_dir" -maxdepth 1 \
+            -name '*gemtek_xr1710g-ubi-squashfs-sysupgrade.itb' -print -quit)
+          test -n "$manifest" && test -s "$manifest"
+          test -n "$sysupgrade" && test -s "$sysupgrade"
+
+          required_manifest='luci-theme-argon luci-app-argon-config luci-app-openclash bash curl dnsmasq-full kmod-inet-diag kmod-nft-tproxy kmod-tun ruby ruby-yaml unzip luci-app-upnp miniupnpd-nftables irqbalance luci-app-irqbalance btop coreutils-nohup etherwake luci-app-airoha-npu luci-app-w1700k-fancontrol airoha-en7581-mt7996-npu-firmware fitblk kmod-hwmon-nct7802 kmod-mt7996-firmware kmod-phy-realtek rtl826x-firmware wpad-basic-mbedtls'
+          for package_name in $required_manifest; do
+            grep -q "^${package_name} - " "$manifest" || {
+              echo "Required package missing from firmware: $package_name"
+              exit 1
+            }
+          done
+
+          forbidden_manifest='luci-theme-bootstrap luci-theme-glass luci-app-package-manager luci-app-airoha-flowsense luci-app-mlo ethtool-full iperf3 kmod-airoha-net-debug mdio-tools openssh-sftp-server phytool tcpdump kmod-wireguard wireguard-tools luci-proto-wireguard'
+          for package_name in $forbidden_manifest; do
+            if grep -q "^${package_name} - " "$manifest"; then
+              echo "Forbidden package present in firmware: $package_name"
+              exit 1
+            fi
+          done
+
+          themes=$(awk '/^luci-theme-/ { print $1 }' "$manifest")
+          test "$themes" = 'luci-theme-argon' || {
+            echo "Unexpected theme set: $themes"
+            exit 1
+          }
+
+          core_in_root=$(find openwrt/build_dir \
+            -path '*/root-airoha/etc/openclash/core/clash_meta' -print -quit)
+          test -n "$core_in_root" && test -x "$core_in_root"
+          file "$core_in_root" | grep -q 'ARM aarch64'
+
+          grep -Fq 'gemtek_xr1710g-ubi' "$target_dir/profiles.json"
+          grep -q '^kernel - 6\.18\.44' "$manifest"
+
+          mkdir -p output/firmware output/build-record
+          cp "$sysupgrade" output/firmware/
+          cp "$manifest" output/firmware/
+          cp resolved-xr1710g-6.18-openclash.config \
+            resolved-xr1710g-6.18-openclash.diffconfig \
+            output/build-record/
+          for extra in profiles.json feeds.buildinfo version.buildinfo; do
+            [ ! -f "$target_dir/$extra" ] || cp "$target_dir/$extra" output/build-record/
+          done
+
+          sysupgrade_bytes=$(stat -c '%s' "$sysupgrade")
+          printf '%s\n' \
+            "Release: $RELEASE_TAG" \
+            "Board: gemtek,xr1710g-ubi" \
+            "Source commit: $SOURCE_COMMIT" \
+            'Kernel: 6.18.44' \
+            "OpenClash: $OPENCLASH_TAG" \
+            "Mihomo: $MIHOMO_TAG ARM64" \
+            'Theme: Argon only' \
+            'WireGuard packages: none' \
+            "Sysupgrade bytes: $sysupgrade_bytes" \
+            'APK release assets: none' \
+            > output/build-record/release-info.txt
+
+          image_count=$(find output/firmware -maxdepth 1 -type f \
+            \( -name '*.itb' -o -name '*.bin' \) | wc -l)
+          test "$image_count" -eq 1
+          if find output -type f \( -name '*.apk' -o -name 'packages.adb' \) \
+            -print -quit | grep -q .; then
+            echo 'APK packages or an APK index leaked into the release output'
+            exit 1
+          fi
+
+          (
+            cd output
+            find firmware build-record -type f \
+              -exec sha256sum '{}' + | sort -k2 > SHA256SUMS
+            awk '{ name=$2; sub(/^.*\//, "", name); print $1 "  " name }' \
+              SHA256SUMS | sort -k2 > RELEASE-SHA256SUMS
+          )
+
+      - name: Upload firmware artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: XR1710G-6.18.44-Minimal-OpenClash-${{ github.run_number }}-${{ github.run_attempt }}
+          path: output/
+          retention-days: 90
+          compression-level: 0
+
+      - name: Publish the verified sysupgrade release
+        run: |
+          printf '%s\n' \
+            '## XR1710G 6.18.44 minimal OpenClash build' \
+            '' \
+            '- Board: `gemtek,xr1710g-ubi`.' \
+            '- Based on the exact source commit used by the verified XR1710G integration release.' \
+            '- Includes Chinese LuCI, Argon, OpenClash + ARM64 Mihomo, UPnP, irqbalance, btop, nohup, etherwake, Airoha SoC Status and Fan Control.' \
+            '- Argon is the only LuCI theme.' \
+            '- Does not include FlowSense, MLO management, package-manager UI, diagnostic bundles or WireGuard packages.' \
+            '- Publishes one `sysupgrade.itb` firmware image and no APK package repository.' \
+            '' \
+            '**This image is only for the XR1710G UBI layout. Do not flash it on W1700K/W1701K. Use a clean flash and do not force an incompatible image.**' \
+            > release-notes.md
+
+          gh release create "$RELEASE_TAG" \
+            --title 'XR1710G 6.18.44 Minimal OpenClash Sysupgrade' \
+            --notes-file release-notes.md \
+            --target "$GITHUB_SHA" \
+            --prerelease
+
+          find output/firmware output/build-record -type f -print0 \
+            | xargs -0 -n 50 gh release upload "$RELEASE_TAG" --clobber
+          gh release upload "$RELEASE_TAG" output/RELEASE-SHA256SUMS --clobber
+
+          find output/firmware output/build-record -type f -printf '%f\n' \
+            | LC_ALL=C sort > expected-assets.txt
+          basename output/RELEASE-SHA256SUMS >> expected-assets.txt
+          LC_ALL=C sort -o expected-assets.txt expected-assets.txt
+          gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name' \
+            | LC_ALL=C sort > uploaded-assets.txt
+          diff -u expected-assets.txt uploaded-assets.txt
+          if grep -Eq '\.apk$|^packages\.adb$' uploaded-assets.txt; then
+            echo 'APK output was unexpectedly uploaded'
+            exit 1
+          fi
