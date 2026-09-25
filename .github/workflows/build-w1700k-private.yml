@@ -4,7 +4,6 @@ on:
   workflow_dispatch:
   push:
     branches:
-      - w1700k-private-homebridge
       - main
     paths:
       - .github/workflows/build-w1700k-private.yml
@@ -19,7 +18,6 @@ env:
   PACKAGES_COMMIT: fbde5d1e31608aa13ad779f97da793e841bc214f
   LUCI_COMMIT: 506ca606d379dd69e9826b2a5e7e2ab90e6b89a5
   ROUTING_COMMIT: 4b9891b9136259f93294a424507ed24c5e8c1cbd
-  NODE_FEED_COMMIT: d7f0690c45221c29e29ce26e94fe31dd5ab934d7
   OPENCLASH_COMMIT: c3a33c1d3407956fdf8f0e0b7c1a4c52e6ad9593
   ARGON_THEME_COMMIT: 2a28799ca063aba7edc3314143b93c8325c86df4
   ARGON_CONFIG_COMMIT: 3e099a37c3f71d0de677f1b6b0f4bffd57d91dac
@@ -65,7 +63,6 @@ jobs:
           test -s private-config/etc/config/wireless
           test -s private-config/etc/config/firewall
           test -s private-config/etc/config/dhcp
-          test -s private-config/usr/share/homebridge/config.json
           chmod -R go-rwx private-config
 
       - name: Start W1700K ARM build container
@@ -97,7 +94,7 @@ jobs:
           cp -a private-config/. build-user/current/files/
           chmod 0755 build-user/current/files/etc/uci-defaults/99-w1700k-private-services
           chmod 0755 build-user/current/files/etc/openclash/custom/openclash_custom_overwrite.sh
-          docker exec -u 0 -e SOURCE_URL -e SOURCE_COMMIT -e NODE_FEED_COMMIT \
+          docker exec -u 0 -e SOURCE_URL -e SOURCE_COMMIT \
             -e PACKAGES_COMMIT -e LUCI_COMMIT -e ROUTING_COMMIT \
             -e OPENCLASH_COMMIT -e ARGON_THEME_COMMIT -e ARGON_CONFIG_COMMIT \
             -e MIHOMO_URL -e MIHOMO_SHA256 \
@@ -124,15 +121,12 @@ jobs:
               printf "%s\n" \
                 "src-git packages https://github.com/openwrt/packages.git^$PACKAGES_COMMIT" \
                 "src-git luci https://github.com/openwrt/luci.git^$LUCI_COMMIT" \
-                "src-git routing https://github.com/openwrt/routing.git^$ROUTING_COMMIT" \
-                "src-git node https://github.com/nxhack/openwrt-node-packages.git^$NODE_FEED_COMMIT" \
+                "src-git routing https://github.com/openwrt/routing.git^$ROUTING_COMMIT
                 > feeds.conf
               ./scripts/feeds update -a
               ./scripts/feeds install -a -p packages
               ./scripts/feeds install -a -p luci
               ./scripts/feeds install -a -p routing
-              rm -f package/feeds/packages/node package/feeds/packages/node-*
-              ./scripts/feeds install -p node node node-homebridge node-homebridge-miot
 
               clone_pinned() {
                 git init "$3"
@@ -169,7 +163,7 @@ jobs:
               for p in luci-app-openclash luci-theme-argon luci-app-upnp \
                 luci-i18n-base-zh-cn coreutils-nohup etherwake irqbalance \
                 luci-app-w1700k-fancontrol luci-app-airoha-npu \
-                luci-app-airoha-flowsense node-homebridge node-homebridge-miot node-npm umdns; do
+                luci-app-airoha-flowsense umdns; do
                 grep -Fqx "CONFIG_PACKAGE_$p=y" .config || {
                   echo "Required package not selected: $p"
                   exit 1
@@ -203,7 +197,7 @@ jobs:
           for p in luci-app-openclash luci-theme-argon luci-app-upnp \
             luci-i18n-base-zh-cn coreutils-nohup etherwake irqbalance \
             luci-app-w1700k-fancontrol luci-app-airoha-npu \
-            luci-app-airoha-flowsense node-homebridge node-homebridge-miot node-npm umdns; do
+            luci-app-airoha-flowsense umdns; do
             grep -q "^$p - " "$manifest" || {
               echo "Required package missing from firmware: $p"
               exit 1

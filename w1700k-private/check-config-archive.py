@@ -4,10 +4,10 @@ import pathlib
 import sys
 import tarfile
 
-allowed = ("etc/config/", "etc/openclash/", "usr/share/homebridge/")
+allowed = ("etc/config/", "etc/openclash/")
 required = {
     "etc/config/network", "etc/config/wireless", "etc/config/firewall",
-    "etc/config/dhcp", "usr/share/homebridge/config.json",
+    "etc/config/dhcp",
 }
 
 with tarfile.open(sys.argv[1], "r:gz") as archive:
