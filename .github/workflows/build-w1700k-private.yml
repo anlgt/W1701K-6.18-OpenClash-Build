@@ -1,0 +1,159 @@
+name: Build W1700K UBI private firmware
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  SOURCE_URL: https://github.com/OpenWRT-fanboy/OpenW1700k.git
+  SOURCE_COMMIT: d80e5ed2c62d1fb380bf1e2bb586083bfb48e6dd
+  NODE_FEED_COMMIT: d7f0690c45221c29e29ce26e94fe31dd5ab934d7
+  OPENCLASH_COMMIT: c3a33c1d3407956fdf8f0e0b7c1a4c52e6ad9593
+  ARGON_THEME_COMMIT: 2a28799ca063aba7edc3314143b93c8325c86df4
+  ARGON_CONFIG_COMMIT: 3e099a37c3f71d0de677f1b6b0f4bffd57d91dac
+  MIHOMO_URL: https://github.com/MetaCubeX/mihomo/releases/download/v1.19.30/mihomo-linux-arm64-v1.19.30.gz
+  MIHOMO_SHA256: 58896873736d28628f66de3677c8654fa0f180662523148e136cff4f6e890069
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Require a private repository and private configuration
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PRIVATE_CONFIG_B64: ${{ secrets.PRIVATE_CONFIG_B64 }}
+        run: |
+          test "$(gh api "repos/$GITHUB_REPOSITORY" --jq .private)" = true || {
+            echo 'Repository must be private before a personalized firmware is built.'
+            exit 1
+          }
+          test -n "$PRIVATE_CONFIG_B64" || {
+            echo 'PRIVATE_CONFIG_B64 secret is missing.'
+            exit 1
+          }
+          mkdir -p private-config
+          printf '%s' "$PRIVATE_CONFIG_B64" | base64 -d > "$RUNNER_TEMP/private-config.tar.gz"
+          python3 w1700k-private/check-config-archive.py "$RUNNER_TEMP/private-config.tar.gz"
+          tar -xzf "$RUNNER_TEMP/private-config.tar.gz" -C private-config
+          test -s private-config/etc/config/network
+          test -s private-config/etc/config/wireless
+          test -s private-config/etc/config/firewall
+          test -s private-config/etc/config/dhcp
+          test -s private-config/usr/share/homebridge/config.json
+          chmod -R go-rwx private-config
+
+      - name: Start W1700K ARM build container
+        run: |
+          mkdir -p build-output build-user
+          docker pull ghcr.io/w1700k/fastbuild_base:base-builder
+          docker run -d --name w1700k-builder \
+            -v "$PWD/build-output:/bld/openwrt_bin" \
+            -v "$PWD/build-user:/bld/user" \
+            ghcr.io/w1700k/fastbuild_base:base-builder
+
+      - name: Prepare pinned W1700K UBI source and packages
+        run: |
+          mkdir -p build-user/current/files
+          cp w1700k-private/config.diff build-user/current/config.diff
+          cp -a w1700k-private/files/. build-user/current/files/
+          cp -a private-config/. build-user/current/files/
+          chmod 0755 build-user/current/files/etc/uci-defaults/99-w1700k-private-services
+          cp -a w1700k-private/package build-user/current/package
+          docker exec -e SOURCE_URL -e SOURCE_COMMIT -e NODE_FEED_COMMIT \
+            -e OPENCLASH_COMMIT -e ARGON_THEME_COMMIT -e ARGON_CONFIG_COMMIT \
+            -e MIHOMO_URL -e MIHOMO_SHA256 \
+            w1700k-builder bash -euc '
+              cd /bld/openwrt
+              git init
+              git remote set-url origin "$SOURCE_URL" 2>/dev/null || git remote add origin "$SOURCE_URL"
+              git fetch --depth 1 origin "$SOURCE_COMMIT"
+              git checkout --detach FETCH_HEAD
+              test "$(git rev-parse HEAD)" = "$SOURCE_COMMIT"
+              grep -Fq "TARGET_DEVICES += gemtek_w1700k-ubi" target/linux/airoha/image/an7581.mk
+              grep -Fq "IMAGES := sysupgrade.itb" target/linux/airoha/image/an7581.mk
+
+              printf "%s\n" \
+                "src-git packages https://github.com/openwrt/packages.git" \
+                "src-git luci https://github.com/openwrt/luci.git" \
+                "src-git routing https://github.com/openwrt/routing.git" \
+                "src-git node https://github.com/nxhack/openwrt-node-packages.git^$NODE_FEED_COMMIT" \
+                > feeds.conf
+              ./scripts/feeds update -a
+              rm -rf feeds/packages/lang/node feeds/packages/lang/node-*
+              ./scripts/feeds install -a
+
+              clone_pinned() {
+                git init "$3"
+                git -C "$3" remote add origin "$1"
+                git -C "$3" fetch --depth 1 origin "$2"
+                git -C "$3" checkout --detach FETCH_HEAD
+                test "$(git -C "$3" rev-parse HEAD)" = "$2"
+              }
+              mkdir -p package/extra
+              clone_pinned https://github.com/vernesong/OpenClash.git "$OPENCLASH_COMMIT" package/extra/OpenClash
+              clone_pinned https://github.com/jerrykuku/luci-theme-argon.git "$ARGON_THEME_COMMIT" package/extra/luci-theme-argon
+              clone_pinned https://github.com/jerrykuku/luci-app-argon-config.git "$ARGON_CONFIG_COMMIT" package/extra/luci-app-argon-config
+              cp -a /bld/user/current/package/. package/extra/
+              curl -fL --retry 5 "$MIHOMO_URL" -o /tmp/mihomo-arm64.gz
+              echo "$MIHOMO_SHA256  /tmp/mihomo-arm64.gz" | sha256sum -c -
+              install -d package/extra/OpenClash/luci-app-openclash/root/etc/openclash/core
+              gzip -dc /tmp/mihomo-arm64.gz > package/extra/OpenClash/luci-app-openclash/root/etc/openclash/core/clash_meta
+              chmod 0755 package/extra/OpenClash/luci-app-openclash/root/etc/openclash/core/clash_meta
+              mkdir -p files
+              cp -a /bld/user/current/files/. files/
+              chmod 0755 files/etc/uci-defaults/99-w1700k-private-services
+              cp /bld/user/current/config.diff .config
+              make defconfig
+              for p in luci-app-openclash luci-theme-argon luci-app-upnp \
+                luci-i18n-base-zh-cn coreutils-nohup etherwake irqbalance \
+                luci-app-w1700k-fancontrol luci-app-airoha-npu \
+                luci-app-airoha-flowsense node-homebridge node-homebridge-miot node-npm umdns; do
+                grep -Fqx "CONFIG_PACKAGE_$p=y" .config || {
+                  echo "Required package not selected: $p"
+                  exit 1
+                }
+              done
+              make download -j8
+            '
+
+      - name: Build firmware
+        run: |
+          docker exec w1700k-builder bash -euc '
+            cd /bld/openwrt
+            make -j"$(nproc)" || make -j1 V=s
+          '
+
+      - name: Verify device, components and private output
+        run: |
+          target_dir=build-output/targets/airoha/an7581
+          image=$(find "$target_dir" -maxdepth 1 -name '*gemtek_w1700k-ubi-squashfs-sysupgrade.itb' -print -quit)
+          manifest=$(find "$target_dir" -maxdepth 1 -name '*gemtek_w1700k-ubi.manifest' -print -quit)
+          test -n "$image" && test -s "$image"
+          test -n "$manifest" && test -s "$manifest"
+          grep -Fq 'gemtek,w1700k-ubi' "$target_dir/profiles.json"
+          for p in luci-app-openclash luci-theme-argon luci-app-upnp \
+            luci-i18n-base-zh-cn coreutils-nohup etherwake irqbalance \
+            luci-app-w1700k-fancontrol luci-app-airoha-npu \
+            luci-app-airoha-flowsense node-homebridge node-homebridge-miot node-npm umdns; do
+            grep -q "^$p - " "$manifest" || {
+              echo "Required package missing from firmware: $p"
+              exit 1
+            }
+          done
+          mkdir -p private-output
+          cp "$image" "$manifest" "$target_dir/profiles.json" private-output/
+          (cd private-output && sha256sum * > SHA256SUMS)
+
+      - name: Upload private firmware artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: W1700K-UBI-private-${{ github.run_number }}
+          path: private-output/
+          retention-days: 7
+          if-no-files-found: error
+
