@@ -158,7 +158,7 @@ jobs:
               make defconfig
               grep -Fqx "CONFIG_HAS_FPU=y" .config
               grep -Fqx "CONFIG_CCACHE=y" .config
-              grep -Fqx 'CONFIG_CCACHE_DIR="/ghcache"' .config
+              grep -Fqx "CONFIG_CCACHE_DIR=\"/ghcache\"" .config
               for p in luci-app-openclash luci-theme-argon luci-app-upnp \
                 luci-i18n-base-zh-cn coreutils-nohup etherwake irqbalance \
                 luci-app-w1700k-fancontrol luci-app-airoha-npu \
