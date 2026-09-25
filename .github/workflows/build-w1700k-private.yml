@@ -165,7 +165,7 @@ jobs:
               }
               require_config "CONFIG_HAS_FPU=y"
               require_config "CONFIG_CCACHE=y"
-              require_config "CONFIG_CCACHE_DIR=\\"/ghcache\\""
+              require_config "CONFIG_CCACHE_DIR=\"/ghcache\""
               for p in luci-app-openclash luci-theme-argon luci-app-upnp \
                 luci-i18n-base-zh-cn coreutils-nohup etherwake irqbalance \
                 luci-app-w1700k-fancontrol luci-app-airoha-npu \
