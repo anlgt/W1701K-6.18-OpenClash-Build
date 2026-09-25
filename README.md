@@ -152,4 +152,3 @@ Hybrid Release 不提供 APK 安装包或与自定义内核配套的软件仓库
 - `patches/004-w1701k-image-safety.patch`：约束 16 MiB 内核分区并修正设备默认包。
 - `files/usr/bin/w1701k-hwcheck`：只读的 RAM 验收脚本。
 - `.github/workflows/build.yml` 与 `w1701k-openclash.config`：6.12.74 回退构建。
-
