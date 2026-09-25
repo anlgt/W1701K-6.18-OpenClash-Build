@@ -1,0 +1,13 @@
+#!/bin/sh
+
+uci -q set luci.main.mediaurlbase='/luci-static/argon'
+uci -q commit luci
+
+if [ -s /usr/share/homebridge/config.json ] && [ -x /etc/init.d/homebridge ]; then
+	chmod 0600 /usr/share/homebridge/config.json
+	chown homebridge:homebridge /usr/share/homebridge/config.json
+	/etc/init.d/homebridge enable
+fi
+
+exit 0
+
