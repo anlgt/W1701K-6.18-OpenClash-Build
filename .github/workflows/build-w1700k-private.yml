@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - w1700k-private-homebridge
+      - main
     paths:
       - .github/workflows/build-w1700k-private.yml
       - w1700k-private/**
@@ -28,9 +29,21 @@ env:
 jobs:
   build:
     runs-on: ubuntu-24.04-arm
-    timeout-minutes: 350
+    timeout-minutes: 360
     steps:
       - uses: actions/checkout@v4
+
+      - id: restore-build-cache
+        uses: actions/cache/restore@v5
+        with:
+          path: |
+            build-user/ghcache
+            build-user/stcache
+            build-user/dlcache
+          key: w1700k-arm64-${{ env.SOURCE_COMMIT }}-${{ hashFiles('w1700k-private/config.diff') }}-${{ github.run_id }}
+          restore-keys: |
+            w1700k-arm64-${{ env.SOURCE_COMMIT }}-${{ hashFiles('w1700k-private/config.diff') }}-
+            w1700k-arm64-${{ env.SOURCE_COMMIT }}-
 
       - name: Require a private repository and private configuration
         env:
@@ -57,11 +70,23 @@ jobs:
 
       - name: Start W1700K ARM build container
         run: |
-          mkdir -p build-output build-user
+          mkdir -p build-output build-user/ghcache build-user/stcache build-user/dlcache
+          if [ -z "$(ls -A build-user/ghcache 2>/dev/null)" ] || [ -z "$(ls -A build-user/stcache 2>/dev/null)" ]; then
+            docker pull ghcr.io/w1700k/fastbuild_base:base-bldcache-ubi2
+            docker create --name w1700k-cache ghcr.io/w1700k/fastbuild_base:base-bldcache-ubi2
+            for d in ghcache stcache dlcache; do
+              docker cp "w1700k-cache:/$d/." "build-user/$d/"
+            done
+            docker rm w1700k-cache
+          fi
+          sudo chown -R "$(id -u):$(id -g)" build-user/ghcache build-user/stcache build-user/dlcache
           docker pull ghcr.io/w1700k/fastbuild_base:base-builder
           docker run -dt --name w1700k-builder \
             -v "$PWD/build-output:/bld/openwrt_bin" \
             -v "$PWD/build-user:/bld/user" \
+            -v "$PWD/build-user/ghcache:/ghcache" \
+            -v "$PWD/build-user/stcache:/stcache" \
+            -v "$PWD/build-user/dlcache:/dlcache" \
             ghcr.io/w1700k/fastbuild_base:base-builder
 
       - name: Prepare pinned W1700K UBI source and packages
@@ -88,6 +113,9 @@ jobs:
                 exit 1
               fi
               ln -sfn /bld/openwrt_bin bin
+              rm -rf dl staging_dir
+              ln -s /dlcache dl
+              ln -s /stcache staging_dir
               grep -Fqx "FEATURES+=pwm" target/linux/airoha/an7581/target.mk
               sed -i "s/^FEATURES+=pwm$/FEATURES+=pwm fpu/" target/linux/airoha/an7581/target.mk
               grep -Fq "TARGET_DEVICES += gemtek_w1700k-ubi" target/linux/airoha/image/an7581.mk
@@ -129,6 +157,8 @@ jobs:
               cp /bld/user/current/config.diff .config
               make defconfig
               grep -Fqx "CONFIG_HAS_FPU=y" .config
+              grep -Fqx "CONFIG_CCACHE=y" .config
+              grep -Fqx 'CONFIG_CCACHE_DIR="/ghcache"' .config
               for p in luci-app-openclash luci-theme-argon luci-app-upnp \
                 luci-i18n-base-zh-cn coreutils-nohup etherwake irqbalance \
                 luci-app-w1700k-fancontrol luci-app-airoha-npu \
@@ -143,10 +173,16 @@ jobs:
 
       - name: Build firmware
         run: |
-          docker exec -u 0 -e FORCE_UNSAFE_CONFIGURE=1 w1700k-builder bash -euc '
-            cd /bld/openwrt
-            make -j"$(nproc)" || make -j1 V=s
-          '
+          docker exec -u 0 \
+            -e FORCE_UNSAFE_CONFIGURE=1 \
+            -e CCACHE_SLOPPINESS=file_stat_matches,include_file_mtime,time_macros \
+            -e CCACHE_NOHASHDIR=true \
+            -e CCACHE_COMPILERCHECK=content \
+            w1700k-builder bash -euc '
+              cd /bld/openwrt
+              make -j"$(($(nproc) + 1))" V=c
+              staging_dir/host/bin/ccache -d /ghcache -s || true
+            '
 
       - name: Verify device, components and private output
         run: |
@@ -170,6 +206,16 @@ jobs:
           cp "$image" "$manifest" "$target_dir/profiles.json" private-output/
           (cd private-output && sha256sum * > SHA256SUMS)
 
+      - name: Save reusable compiler and download caches
+        if: always()
+        uses: actions/cache/save@v5
+        with:
+          path: |
+            build-user/ghcache
+            build-user/stcache
+            build-user/dlcache
+          key: ${{ steps.restore-build-cache.outputs.cache-primary-key }}
+
       - name: Upload private firmware artifact
         uses: actions/upload-artifact@v4
         with:
@@ -177,4 +223,3 @@ jobs:
           path: private-output/
           retention-days: 7
           if-no-files-found: error
-
