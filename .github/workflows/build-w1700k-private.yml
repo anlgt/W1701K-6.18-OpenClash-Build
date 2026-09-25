@@ -143,7 +143,7 @@ jobs:
 
       - name: Build firmware
         run: |
-          docker exec -u 0 w1700k-builder bash -euc '
+          docker exec -u 0 -e FORCE_UNSAFE_CONFIGURE=1 w1700k-builder bash -euc '
             cd /bld/openwrt
             make -j"$(nproc)" || make -j1 V=s
           '
