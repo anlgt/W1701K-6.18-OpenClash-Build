@@ -88,6 +88,8 @@ jobs:
                 exit 1
               fi
               ln -sfn /bld/openwrt_bin bin
+              grep -Fqx "FEATURES+=pwm" target/linux/airoha/an7581/target.mk
+              sed -i "s/^FEATURES+=pwm$/FEATURES+=pwm fpu/" target/linux/airoha/an7581/target.mk
               grep -Fq "TARGET_DEVICES += gemtek_w1700k-ubi" target/linux/airoha/image/an7581.mk
               grep -Fq "IMAGES := sysupgrade.itb" target/linux/airoha/image/an7581.mk
 
@@ -126,6 +128,7 @@ jobs:
               chmod 0755 files/etc/openclash/custom/openclash_custom_overwrite.sh
               cp /bld/user/current/config.diff .config
               make defconfig
+              grep -Fqx "CONFIG_HAS_FPU=y" .config
               for p in luci-app-openclash luci-theme-argon luci-app-upnp \
                 luci-i18n-base-zh-cn coreutils-nohup etherwake irqbalance \
                 luci-app-w1700k-fancontrol luci-app-airoha-npu \
