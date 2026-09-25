@@ -40,4 +40,5 @@ CONFIG_PACKAGE_node-homebridge-miot=y
 CONFIG_PACKAGE_node-npm=y
 CONFIG_PACKAGE_umdns=y
 CONFIG_PACKAGE_ca-bundle=y
-
+CONFIG_CCACHE=y
+CONFIG_CCACHE_DIR="/ghcache"
