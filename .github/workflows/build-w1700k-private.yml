@@ -56,7 +56,7 @@ jobs:
         run: |
           mkdir -p build-output build-user
           docker pull ghcr.io/w1700k/fastbuild_base:base-builder
-          docker run -d --name w1700k-builder \
+          docker run -dt --name w1700k-builder \
             -v "$PWD/build-output:/bld/openwrt_bin" \
             -v "$PWD/build-user:/bld/user" \
             ghcr.io/w1700k/fastbuild_base:base-builder
