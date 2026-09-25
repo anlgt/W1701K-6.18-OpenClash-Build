@@ -63,6 +63,7 @@ jobs:
           cp -a w1700k-private/files/. build-user/current/files/
           cp -a private-config/. build-user/current/files/
           chmod 0755 build-user/current/files/etc/uci-defaults/99-w1700k-private-services
+          chmod 0755 build-user/current/files/etc/openclash/custom/openclash_custom_overwrite.sh
           cp -a w1700k-private/package build-user/current/package
           docker exec -e SOURCE_URL -e SOURCE_COMMIT -e NODE_FEED_COMMIT \
             -e OPENCLASH_COMMIT -e ARGON_THEME_COMMIT -e ARGON_CONFIG_COMMIT \
@@ -107,6 +108,7 @@ jobs:
               mkdir -p files
               cp -a /bld/user/current/files/. files/
               chmod 0755 files/etc/uci-defaults/99-w1700k-private-services
+              chmod 0755 files/etc/openclash/custom/openclash_custom_overwrite.sh
               cp /bld/user/current/config.diff .config
               make defconfig
               for p in luci-app-openclash luci-theme-argon luci-app-upnp \
