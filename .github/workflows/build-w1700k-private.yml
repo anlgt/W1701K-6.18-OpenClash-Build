@@ -95,8 +95,11 @@ jobs:
                 "src-git node https://github.com/nxhack/openwrt-node-packages.git^$NODE_FEED_COMMIT" \
                 > feeds.conf
               ./scripts/feeds update -a
-              rm -rf feeds/packages/lang/node feeds/packages/lang/node-*
-              ./scripts/feeds install -a
+              ./scripts/feeds install -a -p packages
+              ./scripts/feeds install -a -p luci
+              ./scripts/feeds install -a -p routing
+              rm -f package/feeds/packages/node package/feeds/packages/node-*
+              ./scripts/feeds install -p node node node-homebridge
 
               clone_pinned() {
                 git init "$3"
