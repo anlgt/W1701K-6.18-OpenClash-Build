@@ -70,7 +70,7 @@ jobs:
           chmod 0755 build-user/current/files/etc/uci-defaults/99-w1700k-private-services
           chmod 0755 build-user/current/files/etc/openclash/custom/openclash_custom_overwrite.sh
           cp -a w1700k-private/package build-user/current/package
-          docker exec -e SOURCE_URL -e SOURCE_COMMIT -e NODE_FEED_COMMIT \
+          docker exec -u 0 -e SOURCE_URL -e SOURCE_COMMIT -e NODE_FEED_COMMIT \
             -e OPENCLASH_COMMIT -e ARGON_THEME_COMMIT -e ARGON_CONFIG_COMMIT \
             -e MIHOMO_URL -e MIHOMO_SHA256 \
             w1700k-builder bash -euc '
@@ -135,13 +135,14 @@ jobs:
 
       - name: Build firmware
         run: |
-          docker exec w1700k-builder bash -euc '
+          docker exec -u 0 w1700k-builder bash -euc '
             cd /bld/openwrt
             make -j"$(nproc)" || make -j1 V=s
           '
 
       - name: Verify device, components and private output
         run: |
+          sudo chown -R "$(id -u):$(id -g)" build-output
           target_dir=build-output/targets/airoha/an7581
           image=$(find "$target_dir" -maxdepth 1 -name '*gemtek_w1700k-ubi-squashfs-sysupgrade.itb' -print -quit)
           manifest=$(find "$target_dir" -maxdepth 1 -name '*gemtek_w1700k-ubi.manifest' -print -quit)
