@@ -1,5 +1,7 @@
 # Gemtek W1701K 可复现固件构建
 
+> Gemtek **W1700K** 用户：请使用 [W1700K U-Boot 私有固件说明](w1700k-private/README.md)。W1700K 和 W1701K 镜像不可混用。
+
 > 真机已验证的完整刷机、RAM 验收、LuCI 写入 OpenClash 完整版、
 > 无线区域码处理和 Overlay 说明，请查看
 > [W1701K 最终刷机记录](W1701K-FLASH-GUIDE.md)。
@@ -150,3 +152,4 @@ Hybrid Release 不提供 APK 安装包或与自定义内核配套的软件仓库
 - `patches/004-w1701k-image-safety.patch`：约束 16 MiB 内核分区并修正设备默认包。
 - `files/usr/bin/w1701k-hwcheck`：只读的 RAM 验收脚本。
 - `.github/workflows/build.yml` 与 `w1701k-openclash.config`：6.12.74 回退构建。
+
