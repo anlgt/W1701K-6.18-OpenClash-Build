@@ -2,6 +2,12 @@ name: Build W1700K UBI private firmware
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - w1700k-private-homebridge
+    paths:
+      - .github/workflows/build-w1700k-private.yml
+      - w1700k-private/**
 
 permissions:
   contents: read
@@ -26,18 +32,17 @@ jobs:
       - name: Require a private repository and private configuration
         env:
           GH_TOKEN: ${{ github.token }}
-          PRIVATE_CONFIG_B64: ${{ secrets.PRIVATE_CONFIG_B64 }}
         run: |
           test "$(gh api "repos/$GITHUB_REPOSITORY" --jq .private)" = true || {
             echo 'Repository must be private before a personalized firmware is built.'
             exit 1
           }
-          test -n "$PRIVATE_CONFIG_B64" || {
-            echo 'PRIVATE_CONFIG_B64 secret is missing.'
+          test -s w1700k-private/private-config.b64 || {
+            echo 'Private configuration archive is missing.'
             exit 1
           }
           mkdir -p private-config
-          printf '%s' "$PRIVATE_CONFIG_B64" | base64 -d > "$RUNNER_TEMP/private-config.tar.gz"
+          base64 -d w1700k-private/private-config.b64 > "$RUNNER_TEMP/private-config.tar.gz"
           python3 w1700k-private/check-config-archive.py "$RUNNER_TEMP/private-config.tar.gz"
           tar -xzf "$RUNNER_TEMP/private-config.tar.gz" -C private-config
           test -s private-config/etc/config/network
@@ -75,6 +80,11 @@ jobs:
               git fetch --depth 1 origin "$SOURCE_COMMIT"
               git checkout --detach FETCH_HEAD
               test "$(git rev-parse HEAD)" = "$SOURCE_COMMIT"
+              if [ -e bin ] && [ ! -L bin ]; then
+                echo "Unexpected build output directory in base image"
+                exit 1
+              fi
+              ln -sfn /bld/openwrt_bin bin
               grep -Fq "TARGET_DEVICES += gemtek_w1700k-ubi" target/linux/airoha/image/an7581.mk
               grep -Fq "IMAGES := sysupgrade.itb" target/linux/airoha/image/an7581.mk
 
