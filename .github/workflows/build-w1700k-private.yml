@@ -121,7 +121,7 @@ jobs:
               printf "%s\n" \
                 "src-git packages https://github.com/openwrt/packages.git^$PACKAGES_COMMIT" \
                 "src-git luci https://github.com/openwrt/luci.git^$LUCI_COMMIT" \
-                "src-git routing https://github.com/openwrt/routing.git^$ROUTING_COMMIT
+                "src-git routing https://github.com/openwrt/routing.git^$ROUTING_COMMIT" \
                 > feeds.conf
               ./scripts/feeds update -a
               ./scripts/feeds install -a -p packages
