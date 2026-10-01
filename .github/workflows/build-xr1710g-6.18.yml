@@ -317,6 +317,22 @@ jobs:
             exit 1
           fi
 
+      - name: Skip the redundant MHI backport already in Linux 6.18.53
+        working-directory: openwrt
+        run: |
+          set -eu
+          kernel_tarball=dl/linux-6.18.53.tar.xz
+          kernel_source=linux-6.18.53/drivers/bus/mhi/host/pci_generic.c
+          redundant_patch=target/linux/generic/backport-6.18/706-v7.2-bus-mhi-host-pci_generic-round-up-nr_irqs-to-a-power-of-two.patch
+          test -s "$kernel_tarball"
+          tar -tf "$kernel_tarball" | grep -Fxq "$kernel_source"
+          tar -xOf "$kernel_tarball" "$kernel_source" \
+            | grep -Fq 'pci_alloc_irq_vectors(pdev, 1, roundup_pow_of_two(mhi_cntrl->nr_irqs),'
+          test -f "$redundant_patch"
+          grep -Fq 'roundup_pow_of_two(mhi_cntrl->nr_irqs)' "$redundant_patch"
+          rm "$redundant_patch"
+          test ! -e "$redundant_patch"
+
       - name: Build the XR1710G sysupgrade
         working-directory: openwrt
         run: |
@@ -420,6 +436,7 @@ jobs:
             '- Board: `gemtek,xr1710g-ubi`.' \
             '- Uses the public YYH XR1710G integration tree at its verified commit with the verified Linux 6.18.53 stable tarball/hash.' \
             '- Carries the v1.9 tag public MT76 backports 0102-0105, the NPU-stack rebase, and PPE local-flow guard 9991.' \
+            '- Skips the OpenWrt MHI IRQ backport because Linux 6.18.53 already contains the same fix.' \
             '- Includes Simplified Chinese LuCI, Argon, OpenClash + ARM64 Mihomo, UPnP, irqbalance, Airoha SoC Status, Airoha Fan Control and NPU/PPE support.' \
             '- This is a best-effort kernel reconstruction. The v1.9 matching source is unpublished, so this image is not claimed to reproduce its binary or its release-only EHT320, RX/LRO, MLO/OWE and LuCI-cache changes.' \
             '- Argon is the only LuCI theme.' \
