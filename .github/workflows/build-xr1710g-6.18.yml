@@ -1,4 +1,4 @@
-name: Build XR1710G 6.18.44 Minimal OpenClash Sysupgrade
+name: Build XR1710G 6.18.53 Best-Effort OpenClash Sysupgrade
 
 on:
   workflow_dispatch:
@@ -20,17 +20,22 @@ concurrency:
 env:
   SOURCE_URL: https://github.com/YYH2913/openwrt.git
   SOURCE_COMMIT: c82129e7348fda30b9e2f90572e4f1b3c555c7f2
+  COMMUNITY_URL: https://github.com/orangeyoo/XR1710G-OpenWrt-iStoreOS-Community.git
+  COMMUNITY_COMMIT: c00aac00260fcf9506891afebf505ea81b6a0846
+  KERNEL_VERSION: 6.18.53
+  KERNEL_HASH: 4d6fba95c2244b08a7b4144a4d38b9be4fb31abb5e7682ae40bb5cb11374cfe0
+  MT76_VERSION: b2704cf5a4068b672bf47ad5bf6b4802b6770a90
+  MT76_HASH: fc94437f3271a16d3865c16ec3bbdf828ac18a730953a74fc80f76abf461eb67
   PACKAGES_COMMIT: 1c2ce769a8a87cc41caf23397628b1eaa8875c82
   LUCI_COMMIT: 6e1eb21fae71304965621cc7df93259a18a3a93e
   ROUTING_COMMIT: 4b9891b9136259f93294a424507ed24c5e8c1cbd
   OPENCLASH_TAG: v0.47.156
   OPENCLASH_COMMIT: c3a33c1d3407956fdf8f0e0b7c1a4c52e6ad9593
   ARGON_THEME_COMMIT: 2a28799ca063aba7edc3314143b93c8325c86df4
-  ARGON_CONFIG_COMMIT: 3e099a37c3f71d0de677f1b6b0f4bffd57d91dac
   MIHOMO_TAG: v1.19.30
   MIHOMO_URL: https://github.com/MetaCubeX/mihomo/releases/download/v1.19.30/mihomo-linux-arm64-v1.19.30.gz
   MIHOMO_SHA256: 58896873736d28628f66de3677c8654fa0f180662523148e136cff4f6e890069
-  RELEASE_TAG: xr1710g-6.18.44-openclash-r${{ github.run_number }}-${{ github.run_attempt }}
+  RELEASE_TAG: xr1710g-6.18.53-reconstruction-r${{ github.run_number }}-${{ github.run_attempt }}
   GH_TOKEN: ${{ github.token }}
   TZ: Asia/Shanghai
 
@@ -91,6 +96,74 @@ jobs:
           grep -Fq 'IMAGE/sysupgrade.itb := append-kernel' \
             openwrt/target/linux/airoha/image/an7581.mk
 
+          git init /tmp/xr1710g-community
+          git -C /tmp/xr1710g-community remote add origin "$COMMUNITY_URL"
+          git -C /tmp/xr1710g-community fetch --depth 1 origin "$COMMUNITY_COMMIT"
+          git -C /tmp/xr1710g-community checkout --detach FETCH_HEAD
+          test "$(git -C /tmp/xr1710g-community rev-parse HEAD)" = "$COMMUNITY_COMMIT"
+
+      - name: Reconstruct the public Linux 6.18.53 kernel baseline
+        working-directory: openwrt
+        run: |
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          p = Path('target/linux/generic/kernel-6.18')
+          s = p.read_text()
+          kernel_version = os.environ['KERNEL_VERSION']
+          kernel_minor = kernel_version.rsplit('.', 1)[1]
+          kernel_hash = os.environ['KERNEL_HASH']
+          old = ('LINUX_VERSION-6.18 = .44',
+                 'LINUX_KERNEL_HASH-6.18.44 = 0f72d938f06828e82c90405174fe572287db7bfe089e2fc46572a99a7f240d43')
+          new = (f'LINUX_VERSION-6.18 = .{kernel_minor}',
+                 f'LINUX_KERNEL_HASH-6.18.{kernel_version} = {kernel_hash}')
+          for before, after in zip(old, new):
+              if s.count(before) != 1:
+                  raise SystemExit(f'Expected exactly one pinned kernel line: {before}')
+              s = s.replace(before, after, 1)
+          p.write_text(s)
+          PY
+          grep -Fqx 'LINUX_VERSION-6.18 = .53' target/linux/generic/kernel-6.18
+          grep -Fqx 'LINUX_KERNEL_HASH-6.18.53 = 4d6fba95c2244b08a7b4144a4d38b9be4fb31abb5e7682ae40bb5cb11374cfe0' target/linux/generic/kernel-6.18
+
+      - name: Apply the publicly disclosed XR1710G MT76 and PPE fixes
+        working-directory: openwrt
+        run: |
+          mt76_makefile=package/kernel/mt76/Makefile
+          grep -Fqx 'PKG_RELEASE=4' "$mt76_makefile"
+          grep -Fqx 'PKG_SOURCE_DATE:=2026-07-01' "$mt76_makefile"
+          grep -Fqx 'PKG_SOURCE_VERSION:=59676919ea408b0b13a9d23f2e2e1a1ab407fba1' "$mt76_makefile"
+          sed -i \
+            -e 's/^PKG_RELEASE=4$/PKG_RELEASE=7/' \
+            -e 's/^PKG_SOURCE_DATE:=2026-07-01$/PKG_SOURCE_DATE:=2026-08-01/' \
+            -e "s/^PKG_SOURCE_VERSION:=59676919ea408b0b13a9d23f2e2e1a1ab407fba1$/PKG_SOURCE_VERSION:=$MT76_VERSION/" \
+            -e "s/^PKG_MIRROR_HASH:=8a6dc6dac37ed56fcbfd874359f5c25acb65bcfaa795d50494cba17c98405dd5$/PKG_MIRROR_HASH:=$MT76_HASH/" \
+            "$mt76_makefile"
+          grep -Fqx "PKG_SOURCE_VERSION:=$MT76_VERSION" "$mt76_makefile"
+          grep -Fqx "PKG_MIRROR_HASH:=$MT76_HASH" "$mt76_makefile"
+
+          mt76_patch_dir=package/kernel/mt76/patches
+          mkdir -p "$mt76_patch_dir"
+          find "$mt76_patch_dir" -maxdepth 1 -type f -name '*.patch' -delete
+          for patch in \
+            0099-wifi-mt76-mt7996-report-only-terminal-tx-failures.patch \
+            0100-xr1710g-rebase-yyh-an7581-npu-stack-on-b2704cf5.patch \
+            0102-wifi-mt76-mt7996-pass-operating-mode-to-rate-control.patch \
+            0103-wifi-mt76-mt7996-set-skb-device-for-npu-rx.patch \
+            0104-mt7996-unlink-rejected-twt-flow.patch \
+            0105-mt76-fix-disassociated-station-queue.patch; do
+            install -m 0644 "/tmp/xr1710g-community/patches/mt76/$patch" "$mt76_patch_dir/$patch"
+          done
+          grep -Fq 'mt7996_mcu_get_per_sta_info' "$mt76_patch_dir/0100-xr1710g-rebase-yyh-an7581-npu-stack-on-b2704cf5.patch"
+          grep -Fq 'ra->op_vht_rx_nss = link_sta->rx_nss ? link_sta->rx_nss - 1 : 0;' "$mt76_patch_dir/0102-wifi-mt76-mt7996-pass-operating-mode-to-rate-control.patch"
+          grep -Fq 'skb->dev = ieee80211_vif_to_wdev(vif)->netdev' "$mt76_patch_dir/0103-wifi-mt76-mt7996-set-skb-device-for-npu-rx.patch"
+
+          kernel_patch_dir=target/linux/airoha/patches-6.18
+          ppe_patch=9991-net-airoha-protect-local-bridge-flows-from-ppe-fallback.patch
+          test -f "$kernel_patch_dir/9990-net-airoha-bind-WLAN-bound-flows-on-PPE-driver-L2-cache-miss.patch"
+          install -m 0644 "/tmp/xr1710g-community/patches/kernel/$ppe_patch" "$kernel_patch_dir/$ppe_patch"
+          grep -Fq 'egress == skb->dev' "$kernel_patch_dir/$ppe_patch"
+
       - name: Pin feeds and third-party LuCI packages
         working-directory: openwrt
         run: |
@@ -123,8 +196,11 @@ jobs:
 
           clone_pinned https://github.com/jerrykuku/luci-theme-argon.git \
             "$ARGON_THEME_COMMIT" package/extra/luci-theme-argon
-          clone_pinned https://github.com/jerrykuku/luci-app-argon-config.git \
-            "$ARGON_CONFIG_COMMIT" package/extra/luci-app-argon-config
+
+          cp -a /tmp/xr1710g-community/apps/luci-app-airoha-npu \
+            package/extra/luci-app-airoha-npu
+          cp -a /tmp/xr1710g-community/apps/luci-app-airoha-fancontrol \
+            package/extra/luci-app-airoha-fancontrol
 
       - name: Bundle the verified ARM64 Mihomo core
         working-directory: openwrt
@@ -147,10 +223,15 @@ jobs:
           chmod 0755 openwrt/files/etc/uci-defaults/99-xr1710g-custom-defaults
 
           printf '%s\n' \
-            'XR1710G minimal OpenClash build' \
+            'XR1710G 6.18.53 best-effort reconstruction' \
             "source=$SOURCE_URL" \
             "source_commit=$SOURCE_COMMIT" \
-            'kernel=6.18.44' \
+            'kernel=6.18.53 (kernel.org stable source over YYH .44 OpenWrt tree)' \
+            "community_packages_commit=$COMMUNITY_COMMIT" \
+            "mt76_source=$MT76_VERSION" \
+            'public_mt76_backports=0099,0102,0103,0104,0105; NPU stack rebased by 0100' \
+            'public_ppe_guard=9991' \
+            'v1.9_source_match=unavailable-source-not-published' \
             "openclash=$OPENCLASH_TAG" \
             "mihomo=$MIHOMO_TAG" \
             'themes=argon-only' \
@@ -164,7 +245,7 @@ jobs:
           cd openwrt
           make defconfig
 
-          required_packages='apk-mbedtls luci-base luci-mod-admin-full luci-app-firewall luci-compat luci-i18n-base-zh-cn luci-theme-argon luci-app-argon-config luci-i18n-argon-config-zh-cn luci-app-openclash bash ca-bundle curl dnsmasq-full ip-full kmod-inet-diag kmod-nft-tproxy kmod-tun ruby ruby-yaml unzip luci-app-upnp miniupnpd-nftables irqbalance luci-app-irqbalance btop coreutils-nohup etherwake luci-app-airoha-npu luci-app-w1700k-fancontrol airoha-en7581-mt7996-npu-firmware fitblk kmod-hwmon-nct7802 kmod-mt7996-firmware kmod-phy-realtek rtl826x-firmware wpad-basic-mbedtls'
+          required_packages='apk-mbedtls luci-base luci-mod-admin-full luci-app-firewall luci-compat luci-i18n-base-zh-cn luci-theme-argon luci-app-openclash bash ca-bundle curl dnsmasq-full ip-full kmod-inet-diag kmod-nft-tproxy kmod-tun ruby ruby-yaml unzip luci-app-upnp miniupnpd-nftables irqbalance luci-app-irqbalance luci-app-airoha-npu luci-i18n-airoha-npu-zh-cn luci-app-airoha-fancontrol luci-i18n-airoha-fancontrol-zh-cn airoha-en7581-mt7996-npu-firmware fitblk kmod-airoha-eth kmod-airoha-npu kmod-hwmon-nct7802 kmod-mt7996e kmod-mt7996-firmware kmod-nft-offload kmod-phy-realtek rtl826x-firmware wpad-basic-mbedtls'
           for package_name in $required_packages; do
             grep -Fqx "CONFIG_PACKAGE_${package_name}=y" .config || {
               echo "Required package was not selected: $package_name"
@@ -180,7 +261,7 @@ jobs:
             }
           done
 
-          forbidden_packages='luci-theme-bootstrap luci-theme-glass luci-app-package-manager luci-app-airoha-flowsense luci-app-mlo luci-i18n-glass-zh-cn luci-i18n-mlo-zh-cn ethtool-full iperf3 kmod-airoha-net-debug mdio-tools openssh-sftp-server phytool tcpdump kmod-wireguard wireguard-tools luci-proto-wireguard'
+          forbidden_packages='luci-theme-bootstrap luci-theme-glass luci-app-argon-config luci-i18n-argon-config-zh-cn luci-app-package-manager luci-app-airoha-flowsense luci-app-mlo luci-i18n-glass-zh-cn luci-i18n-mlo-zh-cn ethtool-full iperf3 kmod-airoha-net-debug mdio-tools openssh-sftp-server phytool tcpdump btop coreutils-nohup etherwake kmod-wireguard wireguard-tools luci-proto-wireguard'
           for package_name in $forbidden_packages; do
             if grep -Fqx "CONFIG_PACKAGE_${package_name}=y" .config; then
               echo "Forbidden package was selected: $package_name"
@@ -222,7 +303,7 @@ jobs:
           test -n "$manifest" && test -s "$manifest"
           test -n "$sysupgrade" && test -s "$sysupgrade"
 
-          required_manifest='luci-theme-argon luci-app-argon-config luci-app-openclash bash curl dnsmasq-full kmod-inet-diag kmod-nft-tproxy kmod-tun ruby ruby-yaml unzip luci-app-upnp miniupnpd-nftables irqbalance luci-app-irqbalance btop coreutils-nohup etherwake luci-app-airoha-npu luci-app-w1700k-fancontrol airoha-en7581-mt7996-npu-firmware fitblk kmod-hwmon-nct7802 kmod-mt7996-firmware kmod-phy-realtek rtl826x-firmware wpad-basic-mbedtls'
+          required_manifest='luci-theme-argon luci-app-openclash bash curl dnsmasq-full kmod-inet-diag kmod-nft-tproxy kmod-tun ruby ruby-yaml unzip luci-app-upnp miniupnpd-nftables irqbalance luci-app-irqbalance luci-app-airoha-npu luci-app-airoha-fancontrol airoha-en7581-mt7996-npu-firmware fitblk kmod-airoha-eth kmod-airoha-npu kmod-hwmon-nct7802 kmod-mt7996e kmod-mt7996-firmware kmod-nft-offload kmod-phy-realtek rtl826x-firmware wpad-basic-mbedtls'
           for package_name in $required_manifest; do
             grep -q "^${package_name} - " "$manifest" || {
               echo "Required package missing from firmware: $package_name"
@@ -230,7 +311,7 @@ jobs:
             }
           done
 
-          forbidden_manifest='luci-theme-bootstrap luci-theme-glass luci-app-package-manager luci-app-airoha-flowsense luci-app-mlo ethtool-full iperf3 kmod-airoha-net-debug mdio-tools openssh-sftp-server phytool tcpdump kmod-wireguard wireguard-tools luci-proto-wireguard'
+          forbidden_manifest='luci-theme-bootstrap luci-theme-glass luci-app-argon-config luci-i18n-argon-config-zh-cn luci-app-package-manager luci-app-airoha-flowsense luci-app-mlo ethtool-full iperf3 kmod-airoha-net-debug mdio-tools openssh-sftp-server phytool tcpdump btop coreutils-nohup etherwake kmod-wireguard wireguard-tools luci-proto-wireguard'
           for package_name in $forbidden_manifest; do
             if grep -q "^${package_name} - " "$manifest"; then
               echo "Forbidden package present in firmware: $package_name"
@@ -250,7 +331,7 @@ jobs:
           file "$core_in_root" | grep -q 'ARM aarch64'
 
           grep -Fq 'gemtek_xr1710g-ubi' "$target_dir/profiles.json"
-          grep -q '^kernel - 6\.18\.44' "$manifest"
+          grep -q '^kernel - 6\.18\.53' "$manifest"
 
           mkdir -p output/firmware output/build-record
           cp "$sysupgrade" output/firmware/
@@ -267,7 +348,8 @@ jobs:
             "Release: $RELEASE_TAG" \
             "Board: gemtek,xr1710g-ubi" \
             "Source commit: $SOURCE_COMMIT" \
-            'Kernel: 6.18.44' \
+            'Kernel: 6.18.53 (best-effort reconstruction; not the unpublished v1.9 source)' \
+            "Community package source commit: $COMMUNITY_COMMIT" \
             "OpenClash: $OPENCLASH_TAG" \
             "Mihomo: $MIHOMO_TAG ARM64" \
             'Theme: Argon only' \
@@ -296,7 +378,7 @@ jobs:
       - name: Upload firmware artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: XR1710G-6.18.44-Minimal-OpenClash-${{ github.run_number }}-${{ github.run_attempt }}
+          name: XR1710G-6.18.53-Reconstruction-OpenClash-${{ github.run_number }}-${{ github.run_attempt }}
           path: output/
           retention-days: 90
           compression-level: 0
@@ -304,20 +386,22 @@ jobs:
       - name: Publish the verified sysupgrade release
         run: |
           printf '%s\n' \
-            '## XR1710G 6.18.44 minimal OpenClash build' \
+            '## XR1710G 6.18.53 best-effort OpenClash reconstruction' \
             '' \
             '- Board: `gemtek,xr1710g-ubi`.' \
-            '- Based on the exact source commit used by the verified XR1710G integration release.' \
-            '- Includes Chinese LuCI, Argon, OpenClash + ARM64 Mihomo, UPnP, irqbalance, btop, nohup, etherwake, Airoha SoC Status and Fan Control.' \
+            '- Uses the public YYH XR1710G integration tree at its verified commit with the verified Linux 6.18.53 stable tarball/hash.' \
+            '- Carries the v1.9 tag public MT76 backports 0102-0105, the NPU-stack rebase, and PPE local-flow guard 9991.' \
+            '- Includes Simplified Chinese LuCI, Argon, OpenClash + ARM64 Mihomo, UPnP, irqbalance, Airoha SoC Status, Airoha Fan Control and NPU/PPE support.' \
+            '- This is a best-effort kernel reconstruction. The v1.9 matching source is unpublished, so this image is not claimed to reproduce its binary or its release-only EHT320, RX/LRO, MLO/OWE and LuCI-cache changes.' \
             '- Argon is the only LuCI theme.' \
-            '- Does not include FlowSense, MLO management, package-manager UI, diagnostic bundles or WireGuard packages.' \
+            '- Does not include FlowSense, MLO management, Argon configuration app, package-manager UI, diagnostic bundles or WireGuard packages.' \
             '- Publishes one `sysupgrade.itb` firmware image and no APK package repository.' \
             '' \
             '**This image is only for the XR1710G UBI layout. Do not flash it on W1700K/W1701K. Use a clean flash and do not force an incompatible image.**' \
             > release-notes.md
 
           gh release create "$RELEASE_TAG" \
-            --title 'XR1710G 6.18.44 Minimal OpenClash Sysupgrade' \
+            --title 'XR1710G 6.18.53 Best-Effort OpenClash Sysupgrade' \
             --notes-file release-notes.md \
             --target "$GITHUB_SHA" \
             --prerelease
