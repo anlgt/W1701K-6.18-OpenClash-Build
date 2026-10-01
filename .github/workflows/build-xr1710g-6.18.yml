@@ -273,7 +273,7 @@ jobs:
           cd openwrt
           make defconfig
 
-          required_packages='apk-mbedtls luci-base luci-mod-admin-full luci-app-firewall luci-compat luci-i18n-base-zh-cn luci-theme-argon luci-app-openclash bash ca-bundle curl dnsmasq-full ip-full kmod-inet-diag kmod-nft-tproxy kmod-tun ruby ruby-yaml unzip luci-app-upnp miniupnpd-nftables irqbalance luci-app-irqbalance luci-app-airoha-npu xr1710g-status-core luci-i18n-airoha-npu-zh-cn luci-app-airoha-fancontrol luci-i18n-airoha-fancontrol-zh-cn airoha-en7581-mt7996-npu-firmware fitblk kmod-hwmon-nct7802 kmod-i2c-an7581 kmod-mt7996e kmod-mt7996-firmware kmod-nft-offload kmod-phy-realtek rtl826x-firmware wpad-basic-mbedtls'
+          required_packages='apk-mbedtls luci-base luci-mod-admin-full luci-app-firewall luci-compat luci-i18n-base-zh-cn luci-theme-argon luci-app-openclash bash ca-bundle curl dnsmasq-full ip-full kmod-inet-diag kmod-nft-tproxy kmod-tun ruby ruby-yaml unzip luci-app-upnp miniupnpd-nftables irqbalance luci-app-irqbalance luci-app-airoha-npu xr1710g-status-core luci-i18n-airoha-npu-zh-cn luci-app-airoha-fancontrol luci-i18n-airoha-fancontrol-zh-cn airoha-en7581-mt7996-npu-firmware fitblk kmod-hwmon-nct7802 kmod-mt7996e kmod-mt7996-firmware kmod-nft-offload kmod-phy-realtek rtl826x-firmware wpad-basic-mbedtls'
           for package_name in $required_packages; do
             grep -Fqx "CONFIG_PACKAGE_${package_name}=y" .config || {
               echo "Required package was not selected: $package_name"
