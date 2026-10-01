@@ -326,7 +326,7 @@ jobs:
           mhi_source=linux-6.18.53/drivers/bus/mhi/host/pci_generic.c
           mhi_patch=target/linux/generic/backport-6.18/706-v7.2-bus-mhi-host-pci_generic-round-up-nr_irqs-to-a-power-of-two.patch
           qca8k_source=linux-6.18.53/drivers/net/dsa/qca/qca8k-8xxx.c
-          qca8k_patch=target/linux/generic/backport-6.18/751-v7.2-net-dsa-qca8k-add-support-for-force-mode-for-fixed-1.patch
+          qca8k_patch=target/linux/generic/backport-6.18/751-v7.2-net-dsa-qca8k-add-support-for-force-mode-for-fixed-l.patch
           kernel_check_dir=/tmp/xr1710g-linux-6.18.53-check
           test -s "$kernel_tarball"
           mkdir -p "$kernel_check_dir"
