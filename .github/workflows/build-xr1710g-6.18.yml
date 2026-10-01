@@ -97,6 +97,31 @@ jobs:
           grep -Fq 'IMAGE/sysupgrade.itb := append-kernel' \
             openwrt/target/linux/airoha/image/an7581.mk
 
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('openwrt/target/linux/airoha/image/an7581.mk')
+          s = p.read_text()
+          device_start = s.index('define Device/gemtek_xr1710g-ubi\n')
+          packages_start = s.index('DEVICE_PACKAGES :=', device_start)
+          packages_end = s.index('\n\nUBINIZE_OPTS := -E 5', packages_start)
+          old = s[packages_start:packages_end]
+          for package in ('ethtool-full', 'iperf3', 'kmod-airoha-net-debug',
+                          'luci-app-mlo', 'luci-app-package-manager',
+                          'luci-theme-glass', 'openssh-sftp-server', 'tcpdump'):
+              if package not in old:
+                  raise SystemExit(f'Expected XR1710G device package is missing: {package}')
+          new = '''DEVICE_PACKAGES := airoha-en7581-mt7996-npu-firmware \\
+            fitblk ip-bridge ip-full \\
+            kmod-hwmon-nct7802 kmod-i2c-an7581 \\
+            kmod-mt7996-firmware kmod-phy-realtek rtl826x-firmware \\
+            luci luci-app-firewall \\
+            luci-i18n-airoha-npu-zh-cn luci-i18n-base-zh-cn \\
+            luci-i18n-firewall-zh-cn luci-mod-admin-full luci-proto-ppp \\
+            px5g-mbedtls rpcd-mod-rrdns uhttpd uhttpd-mod-ubus \\
+            wpad-basic-mbedtls'''
+          p.write_text(s[:packages_start] + new + s[packages_end:])
+          PY
+
           git init /tmp/xr1710g-community
           git -C /tmp/xr1710g-community remote add origin "$COMMUNITY_URL"
           git -C /tmp/xr1710g-community fetch --depth 1 origin "$COMMUNITY_COMMIT"
@@ -202,6 +227,8 @@ jobs:
             package/extra/luci-app-airoha-npu
           cp -a /tmp/xr1710g-community/apps/luci-app-airoha-fancontrol \
             package/extra/luci-app-airoha-fancontrol
+          cp -a /tmp/xr1710g-community/apps/xr1710g-status-core \
+            package/extra/xr1710g-status-core
 
       - name: Bundle the verified ARM64 Mihomo core
         working-directory: openwrt
@@ -246,7 +273,7 @@ jobs:
           cd openwrt
           make defconfig
 
-          required_packages='apk-mbedtls luci-base luci-mod-admin-full luci-app-firewall luci-compat luci-i18n-base-zh-cn luci-theme-argon luci-app-openclash bash ca-bundle curl dnsmasq-full ip-full kmod-inet-diag kmod-nft-tproxy kmod-tun ruby ruby-yaml unzip luci-app-upnp miniupnpd-nftables irqbalance luci-app-irqbalance luci-app-airoha-npu luci-i18n-airoha-npu-zh-cn luci-app-airoha-fancontrol luci-i18n-airoha-fancontrol-zh-cn airoha-en7581-mt7996-npu-firmware fitblk kmod-airoha-eth kmod-airoha-npu kmod-hwmon-nct7802 kmod-mt7996e kmod-mt7996-firmware kmod-nft-offload kmod-phy-realtek rtl826x-firmware wpad-basic-mbedtls'
+          required_packages='apk-mbedtls luci-base luci-mod-admin-full luci-app-firewall luci-compat luci-i18n-base-zh-cn luci-theme-argon luci-app-openclash bash ca-bundle curl dnsmasq-full ip-full kmod-inet-diag kmod-nft-tproxy kmod-tun ruby ruby-yaml unzip luci-app-upnp miniupnpd-nftables irqbalance luci-app-irqbalance luci-app-airoha-npu xr1710g-status-core luci-i18n-airoha-npu-zh-cn luci-app-airoha-fancontrol luci-i18n-airoha-fancontrol-zh-cn airoha-en7581-mt7996-npu-firmware fitblk kmod-hwmon-nct7802 kmod-i2c-an7581 kmod-mt7996e kmod-mt7996-firmware kmod-nft-offload kmod-phy-realtek rtl826x-firmware wpad-basic-mbedtls'
           for package_name in $required_packages; do
             grep -Fqx "CONFIG_PACKAGE_${package_name}=y" .config || {
               echo "Required package was not selected: $package_name"
@@ -304,7 +331,7 @@ jobs:
           test -n "$manifest" && test -s "$manifest"
           test -n "$sysupgrade" && test -s "$sysupgrade"
 
-          required_manifest='luci-theme-argon luci-app-openclash bash curl dnsmasq-full kmod-inet-diag kmod-nft-tproxy kmod-tun ruby ruby-yaml unzip luci-app-upnp miniupnpd-nftables irqbalance luci-app-irqbalance luci-app-airoha-npu luci-app-airoha-fancontrol airoha-en7581-mt7996-npu-firmware fitblk kmod-airoha-eth kmod-airoha-npu kmod-hwmon-nct7802 kmod-mt7996e kmod-mt7996-firmware kmod-nft-offload kmod-phy-realtek rtl826x-firmware wpad-basic-mbedtls'
+          required_manifest='luci-theme-argon luci-app-openclash bash curl dnsmasq-full kmod-inet-diag kmod-nft-tproxy kmod-tun ruby ruby-yaml unzip luci-app-upnp miniupnpd-nftables irqbalance luci-app-irqbalance luci-app-airoha-npu xr1710g-status-core luci-app-airoha-fancontrol airoha-en7581-mt7996-npu-firmware fitblk kmod-hwmon-nct7802 kmod-i2c-an7581 kmod-mt7996e kmod-mt7996-firmware kmod-nft-offload kmod-phy-realtek rtl826x-firmware wpad-basic-mbedtls'
           for package_name in $required_manifest; do
             grep -q "^${package_name} - " "$manifest" || {
               echo "Required package missing from firmware: $package_name"
