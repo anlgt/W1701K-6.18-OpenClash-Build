@@ -358,6 +358,25 @@ jobs:
           rm "$qca8k_patch"
           test ! -e "$qca8k_patch"
 
+      - name: Omit unrelated RTL8365MB backports that do not apply to Linux 6.18.53
+        working-directory: openwrt
+        run: |
+          set -eu
+          shopt -s nullglob
+          patches=(target/linux/generic/backport-6.18/942-*.patch \
+            target/linux/generic/backport-6.18/943-*.patch \
+            target/linux/generic/backport-6.18/944-*.patch)
+          if [[ "${#patches[@]}" -ne 15 ]]; then
+            printf 'Expected 15 unrelated RTL8365MB backports, found %s\n' "${#patches[@]}"
+            exit 1
+          fi
+          for patch in "${patches[@]}"; do
+            printf 'Omitting non-target RTL8365MB backport: %s\n' "$patch"
+            rm "$patch"
+            test ! -e "$patch"
+          done
+          test ! -e target/linux/generic/backport-6.18/942-04-v7.2-net-dsa-realtek-rtl8365mb-prepare-for-multiple-sourc.patch
+
       - name: Build the XR1710G sysupgrade
         working-directory: openwrt
         run: |
