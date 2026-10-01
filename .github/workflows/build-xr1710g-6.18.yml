@@ -327,25 +327,34 @@ jobs:
           mhi_patch=target/linux/generic/backport-6.18/706-v7.2-bus-mhi-host-pci_generic-round-up-nr_irqs-to-a-power-of-two.patch
           qca8k_source=linux-6.18.53/drivers/net/dsa/qca/qca8k-8xxx.c
           qca8k_patch=target/linux/generic/backport-6.18/751-v7.2-net-dsa-qca8k-add-support-for-force-mode-for-fixed-1.patch
-          kernel_tar_list=/tmp/xr1710g-linux-6.18.53-tar-list.txt
           kernel_check_dir=/tmp/xr1710g-linux-6.18.53-check
           test -s "$kernel_tarball"
-          tar -tf "$kernel_tarball" > "$kernel_tar_list"
-          grep -Fxq "$mhi_source" "$kernel_tar_list"
-          grep -Fxq "$qca8k_source" "$kernel_tar_list"
           mkdir -p "$kernel_check_dir"
-          tar -xf "$kernel_tarball" -C "$kernel_check_dir" "$mhi_source" "$qca8k_source"
+          tar -xOf "$kernel_tarball" "$mhi_source" > "$kernel_check_dir/pci_generic.c"
+          tar -xOf "$kernel_tarball" "$qca8k_source" > "$kernel_check_dir/qca8k-8xxx.c"
           grep -Fq 'pci_alloc_irq_vectors(pdev, 1, roundup_pow_of_two(mhi_cntrl->nr_irqs),' \
-            "$kernel_check_dir/$mhi_source"
-          test -f "$mhi_patch"
-          grep -Fq 'roundup_pow_of_two(mhi_cntrl->nr_irqs)' "$mhi_patch"
+            "$kernel_check_dir/pci_generic.c" || {
+              echo 'Linux 6.18.53 tarball does not contain the expected MHI IRQ fix'
+              exit 1
+            }
+          test -f "$mhi_patch" || { echo "Missing expected MHI backport: $mhi_patch"; exit 1; }
+          grep -Fq 'roundup_pow_of_two(mhi_cntrl->nr_irqs)' "$mhi_patch" || {
+            echo "MHI backport is not the redundant fix: $mhi_patch"
+            exit 1
+          }
           rm "$mhi_patch"
           test ! -e "$mhi_patch"
 
           grep -Fq 'mask |= QCA8K_PORT_PAD_SGMII_FORCE_MODE;' \
-            "$kernel_check_dir/$qca8k_source"
-          test -f "$qca8k_patch"
-          grep -Fq 'mask |= QCA8K_PORT_PAD_SGMII_FORCE_MODE;' "$qca8k_patch"
+            "$kernel_check_dir/qca8k-8xxx.c" || {
+              echo 'Linux 6.18.53 tarball does not contain the expected QCA8K force-mode change'
+              exit 1
+            }
+          test -f "$qca8k_patch" || { echo "Missing expected QCA8K backport: $qca8k_patch"; exit 1; }
+          grep -Fq 'mask |= QCA8K_PORT_PAD_SGMII_FORCE_MODE;' "$qca8k_patch" || {
+            echo "QCA8K backport is not the redundant fix: $qca8k_patch"
+            exit 1
+          }
           rm "$qca8k_patch"
           test ! -e "$qca8k_patch"
 
