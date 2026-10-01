@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - main
+      - xr1710g-6.18.53-rebuild
     paths:
       - .github/workflows/build-xr1710g-6.18.yml
       - xr1710g-6.18-openclash.config
