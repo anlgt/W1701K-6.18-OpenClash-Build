@@ -49,7 +49,7 @@ jobs:
       - name: Reclaim build space
         uses: easimon/maximize-build-space@c28619d8999a147d5e09c1199f84ff6af6ad5794
         with:
-          root-reserve-mb: 6144
+          root-reserve-mb: 8192
           swap-size-mb: 2048
           remove-android: true
           remove-codeql: true
@@ -64,6 +64,7 @@ jobs:
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
+          sudo apt-get clean
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             ack antlr3 asciidoc autoconf automake autopoint binutils bison \
