@@ -103,7 +103,7 @@ jobs:
           s = p.read_text()
           device_start = s.index('define Device/gemtek_xr1710g-ubi\n')
           packages_start = s.index('DEVICE_PACKAGES :=', device_start)
-          packages_end = s.index('\n\nUBINIZE_OPTS := -E 5', packages_start)
+          packages_end = s.index('UBINIZE_OPTS := -E 5', packages_start)
           old = s[packages_start:packages_end]
           for package in ('ethtool-full', 'iperf3', 'kmod-airoha-net-debug',
                           'luci-app-mlo', 'luci-app-package-manager',
@@ -119,7 +119,7 @@ jobs:
             luci-i18n-firewall-zh-cn luci-mod-admin-full luci-proto-ppp \\
             px5g-mbedtls rpcd-mod-rrdns uhttpd uhttpd-mod-ubus \\
             wpad-basic-mbedtls'''
-          p.write_text(s[:packages_start] + new + s[packages_end:])
+          p.write_text(s[:packages_start] + new + '\n\n' + s[packages_end:])
           PY
 
           git init /tmp/xr1710g-community
