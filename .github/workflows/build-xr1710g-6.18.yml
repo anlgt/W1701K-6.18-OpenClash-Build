@@ -260,6 +260,7 @@ jobs:
             "mt76_source=$MT76_VERSION" \
             'public_mt76_backports=0099,0102,0103,0104,0105; NPU stack rebased by 0100' \
             'public_ppe_guard=9991' \
+            'skipped_redundant_backports=706-mhi-irq,751-qca8k-force-mode (already present in Linux 6.18.53)' \
             'v1.9_source_match=unavailable-source-not-published' \
             "openclash=$OPENCLASH_TAG" \
             "mihomo=$MIHOMO_TAG" \
@@ -317,21 +318,31 @@ jobs:
             exit 1
           fi
 
-      - name: Skip the redundant MHI backport already in Linux 6.18.53
+      - name: Skip backports already included in Linux 6.18.53
         working-directory: openwrt
         run: |
           set -eu
           kernel_tarball=dl/linux-6.18.53.tar.xz
-          kernel_source=linux-6.18.53/drivers/bus/mhi/host/pci_generic.c
-          redundant_patch=target/linux/generic/backport-6.18/706-v7.2-bus-mhi-host-pci_generic-round-up-nr_irqs-to-a-power-of-two.patch
+          mhi_source=linux-6.18.53/drivers/bus/mhi/host/pci_generic.c
+          mhi_patch=target/linux/generic/backport-6.18/706-v7.2-bus-mhi-host-pci_generic-round-up-nr_irqs-to-a-power-of-two.patch
+          qca8k_source=linux-6.18.53/drivers/net/dsa/qca/qca8k-8xxx.c
+          qca8k_patch=target/linux/generic/backport-6.18/751-v7.2-net-dsa-qca8k-add-support-for-force-mode-for-fixed-1.patch
           test -s "$kernel_tarball"
-          tar -tf "$kernel_tarball" | grep -Fxq "$kernel_source"
-          tar -xOf "$kernel_tarball" "$kernel_source" \
+          tar -tf "$kernel_tarball" | grep -Fxq "$mhi_source"
+          tar -xOf "$kernel_tarball" "$mhi_source" \
             | grep -Fq 'pci_alloc_irq_vectors(pdev, 1, roundup_pow_of_two(mhi_cntrl->nr_irqs),'
-          test -f "$redundant_patch"
-          grep -Fq 'roundup_pow_of_two(mhi_cntrl->nr_irqs)' "$redundant_patch"
-          rm "$redundant_patch"
-          test ! -e "$redundant_patch"
+          test -f "$mhi_patch"
+          grep -Fq 'roundup_pow_of_two(mhi_cntrl->nr_irqs)' "$mhi_patch"
+          rm "$mhi_patch"
+          test ! -e "$mhi_patch"
+
+          tar -tf "$kernel_tarball" | grep -Fxq "$qca8k_source"
+          tar -xOf "$kernel_tarball" "$qca8k_source" \
+            | grep -Fq 'mask |= QCA8K_PORT_PAD_SGMII_FORCE_MODE;'
+          test -f "$qca8k_patch"
+          grep -Fq 'mask |= QCA8K_PORT_PAD_SGMII_FORCE_MODE;' "$qca8k_patch"
+          rm "$qca8k_patch"
+          test ! -e "$qca8k_patch"
 
       - name: Build the XR1710G sysupgrade
         working-directory: openwrt
@@ -436,7 +447,7 @@ jobs:
             '- Board: `gemtek,xr1710g-ubi`.' \
             '- Uses the public YYH XR1710G integration tree at its verified commit with the verified Linux 6.18.53 stable tarball/hash.' \
             '- Carries the v1.9 tag public MT76 backports 0102-0105, the NPU-stack rebase, and PPE local-flow guard 9991.' \
-            '- Skips the OpenWrt MHI IRQ backport because Linux 6.18.53 already contains the same fix.' \
+            '- Skips the OpenWrt MHI IRQ and QCA8K force-mode backports because Linux 6.18.53 already contains both changes.' \
             '- Includes Simplified Chinese LuCI, Argon, OpenClash + ARM64 Mihomo, UPnP, irqbalance, Airoha SoC Status, Airoha Fan Control and NPU/PPE support.' \
             '- This is a best-effort kernel reconstruction. The v1.9 matching source is unpublished, so this image is not claimed to reproduce its binary or its release-only EHT320, RX/LRO, MLO/OWE and LuCI-cache changes.' \
             '- Argon is the only LuCI theme.' \
