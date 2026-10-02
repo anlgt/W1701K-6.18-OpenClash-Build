@@ -467,17 +467,19 @@ jobs:
 
           path = Path(sys.argv[1])
           text = path.read_text()
-          only_hunk = '''--- a/include/linux/soc/airoha/airoha_offload.h
-+++ b/include/linux/soc/airoha/airoha_offload.h
-@@ -6,6 +6,7 @@
- #ifndef AIROHA_OFFLOAD_H
- #define AIROHA_OFFLOAD_H
-
-+#include <linux/skbuff.h>
- #include <linux/spinlock.h>
- #include <linux/workqueue.h>
-'''
-          only_hunk += " \n"
+          only_hunk = "\n".join(
+              (
+                  "--- a/include/linux/soc/airoha/airoha_offload.h",
+                  "+++ b/include/linux/soc/airoha/airoha_offload.h",
+                  "@@ -6,6 +6,7 @@",
+                  " #ifndef AIROHA_OFFLOAD_H",
+                  " #define AIROHA_OFFLOAD_H",
+                  " ",
+                  "+#include <linux/skbuff.h>",
+                  " #include <linux/spinlock.h>",
+                  " #include <linux/workqueue.h>",
+              )
+          ) + "\n \n"
           if (
               text.count(only_hunk) != 1
               or not text.endswith(only_hunk)
