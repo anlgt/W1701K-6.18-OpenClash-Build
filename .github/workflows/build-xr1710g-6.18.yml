@@ -705,14 +705,22 @@ jobs:
 
           path = Path("scripts/patch-kernel.sh")
           source = path.read_text()
-          old = '''    if [ $? != 0 ] ; then
-        echo "Patch failed!  Please fix $i!"
-\texit 1
-    fi'''
-          new = '''    if [ $? != 0 ] ; then
-        echo "Preflight failed patch: $i"
-        printf '%s\\n' "$i" >> "${XR1710G_PATCH_FAILURES:?}"
-    fi'''
+          old = "\n".join(
+              (
+                  "    if [ $? != 0 ] ; then",
+                  "        echo \"Patch failed!  Please fix $i!\"",
+                  "\texit 1",
+                  "    fi",
+              )
+          )
+          new = "\n".join(
+              (
+                  "    if [ $? != 0 ] ; then",
+                  "        echo \"Preflight failed patch: $i\"",
+                  "        printf '%s\\n' \"$i\" >> \"${XR1710G_PATCH_FAILURES:?}\"",
+                  "    fi",
+              )
+          )
           count = source.count(old)
           if count != 1:
               raise SystemExit(
