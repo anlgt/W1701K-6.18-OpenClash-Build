@@ -626,7 +626,7 @@ jobs:
           PATCH_WRAPPER
           chmod 0755 "$preflight_dir/patch"
           set +e
-          PATCH="$preflight_dir/patch" make -j1 target/linux/prepare
+          PATCH="$preflight_dir/patch" make -j1 V=s target/linux/prepare
           prepare_status=$?
           set -e
           if [ "$prepare_status" -ne 0 ]; then
