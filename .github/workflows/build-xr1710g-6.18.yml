@@ -819,6 +819,63 @@ jobs:
           print("Rebased XFRM SOE flow binding onto the split forward-path checks")
           PY
 
+      - name: Rebase the UPIO_AU serial fix onto Linux 6.18.53
+        working-directory: openwrt
+        run: |
+          set -eu
+          python3 - <<'PY'
+          import difflib
+          import tarfile
+          from pathlib import Path
+
+          kernel_path = "drivers/tty/serial/8250/8250_port.c"
+          archive = tarfile.open("dl/linux-6.18.53.tar.xz", "r:xz")
+          member = archive.extractfile(f"linux-6.18.53/{kernel_path}")
+          if member is None:
+              raise SystemExit(f"Missing pinned kernel source: {kernel_path}")
+          original = member.read().decode()
+          start = original.index("static void set_io_from_upio(")
+          end = original.index("\nstatic void", start + 1)
+          function = original[start:end]
+          port_case = "\tcase UPIO_PORT:\n\t\tp->serial_in = io_serial_in;"
+          empty_au_case = "\n\tcase UPIO_AU:\n\t\tbreak;"
+          if function.count("case UPIO_AU:") != 1:
+              raise SystemExit("Linux 6.18.53 no longer has exactly one UPIO_AU case to rebase")
+          if function.count(port_case) != 1 or function.count(empty_au_case) != 1:
+              raise SystemExit("UPIO_AU or UPIO_PORT context changed; refusing an unreviewed rewrite")
+          rebased = original.replace(port_case, "\tcase UPIO_PORT:\n\tcase UPIO_AU:\n\t\tp->serial_in = io_serial_in;", 1)
+          if rebased.count(empty_au_case) != 1:
+              raise SystemExit("Could not locate the original empty UPIO_AU branch")
+          rebased = rebased.replace(empty_au_case, "", 1)
+          rebased_function = rebased[start:end]
+          if rebased_function.count("case UPIO_AU:") != 1:
+              raise SystemExit("Rebased UPIO_AU branch is not unique")
+
+          patch = Path("target/linux/generic/hack-6.18/890-serial-8250-add-UPIO_AU-case-to-set_io_from_upio.patch")
+          if not patch.is_file() or "Subject: [PATCH] serial: 8250: add UPIO_AU case" not in patch.read_text():
+              raise SystemExit(f"Unexpected or missing upstream UPIO_AU fix: {patch}")
+          diff = "".join(difflib.unified_diff(
+              original.splitlines(keepends=True),
+              rebased.splitlines(keepends=True),
+              fromfile=f"a/{kernel_path}",
+              tofile=f"b/{kernel_path}",
+              n=3,
+          ))
+          if diff.count("@@ ") not in (1, 2):
+              raise SystemExit("Generated UPIO_AU patch has an unexpected hunk count")
+          if (
+              "+\tcase UPIO_AU:\n" not in diff
+              or "-\tcase UPIO_AU:\n-\t\tbreak;" not in diff
+          ):
+              raise SystemExit("Generated UPIO_AU patch does not move the existing branch")
+          patch.write_text(
+              "Subject: [PATCH] serial: 8250: rebase UPIO_AU fix onto Linux 6.18.53\n\n"
+              "Move the existing UPIO_AU branch to the I/O callback cases instead of adding a duplicate.\n"
+              "---\n" + diff
+          )
+          print(f"Rebased {patch} against the pinned Linux 6.18.53 source")
+          PY
+
       - name: Preflight the complete Linux kernel patch stack before compiling
         working-directory: openwrt
         run: |
@@ -876,6 +933,24 @@ jobs:
           if [ -s "$XR1710G_PATCH_FAILURES" ]; then
             exit 1
           fi
+          python3 - <<'PY'
+          from pathlib import Path
+
+          source = Path(
+              "build_dir/target-aarch64_cortex-a53_musl/linux-airoha_an7581/"
+              "linux-6.18.53/drivers/tty/serial/8250/8250_port.c"
+          ).read_text()
+          start = source.index("static void set_io_from_upio(")
+          end = source.index("\nstatic void", start + 1)
+          function = source[start:end]
+          if function.count("case UPIO_AU:") != 1:
+              raise SystemExit("Post-patch Linux source must contain exactly one UPIO_AU case")
+          if "\tcase UPIO_AU:\n\t\tp->serial_in = io_serial_in;" not in function:
+              raise SystemExit("UPIO_AU does not share the expected I/O callbacks after patching")
+          if "\tcase UPIO_AU:\n\t\tbreak;" in function:
+              raise SystemExit("The obsolete empty UPIO_AU case remains after patching")
+          print("Verified the patched 8250 source has one functional UPIO_AU case before compilation")
+          PY
           echo 'All kernel patches applied cleanly to the pinned Linux 6.18.53 source.'
 
       - name: Build the XR1710G sysupgrade
