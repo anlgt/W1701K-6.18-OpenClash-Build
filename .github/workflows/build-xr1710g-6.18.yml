@@ -598,6 +598,48 @@ jobs:
           test ! -e target/linux/generic/pending-6.18/738-02-net-ethernet-mtk_eth_soc-do-not-enable-page-pool-sta.patch
           echo 'Omitted MediaTek Ethernet/PPE-only backports; XR1710G uses the Airoha EN7581 SoC.'
 
+      - name: Preflight the complete Linux kernel patch stack before compiling
+        working-directory: openwrt
+        run: |
+          set -eu
+          preflight_dir=/tmp/xr1710g-kernel-patch-preflight
+          mkdir -p "$preflight_dir"
+          export XR1710G_REAL_PATCH="$(command -v patch)"
+          export XR1710G_PATCH_FAILURES="$preflight_dir/failures.txt"
+          test -n "$XR1710G_REAL_PATCH"
+          rm -f "$XR1710G_PATCH_FAILURES"
+          cat > "$preflight_dir/patch" <<'PATCH_WRAPPER'
+          #!/usr/bin/env bash
+          set -u
+          input=$(mktemp)
+          cat > "$input"
+          "$XR1710G_REAL_PATCH" "$@" < "$input"
+          status=$?
+          if [ "$status" -ne 0 ]; then
+            subject=$(grep -m1 '^Subject:' "$input" || true)
+            file=$(grep -m1 '^--- a/' "$input" || true)
+            printf '%s | %s\n' "${subject:-no Subject header}" "${file:-no file header}" \
+              >> "$XR1710G_PATCH_FAILURES"
+          fi
+          rm -f "$input"
+          exit 0
+          PATCH_WRAPPER
+          chmod 0755 "$preflight_dir/patch"
+          set +e
+          PATCH="$preflight_dir/patch" make -j1 target/linux/prepare
+          prepare_status=$?
+          set -e
+          if [ "$prepare_status" -ne 0 ]; then
+            echo "Kernel prepare command failed before patch audit completed (exit $prepare_status)."
+            exit "$prepare_status"
+          fi
+          if [ -s "$XR1710G_PATCH_FAILURES" ]; then
+            echo 'Kernel patch preflight found these hunks that do not apply to Linux 6.18.53:'
+            sort -u "$XR1710G_PATCH_FAILURES"
+            exit 1
+          fi
+          echo 'All kernel patches applied cleanly to the pinned Linux 6.18.53 source.'
+
       - name: Build the XR1710G sysupgrade
         working-directory: openwrt
         run: |
