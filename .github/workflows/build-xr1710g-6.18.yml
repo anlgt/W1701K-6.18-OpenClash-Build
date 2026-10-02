@@ -692,6 +692,133 @@ jobs:
           test ! -e target/linux/generic/pending-6.18/738-02-net-ethernet-mtk_eth_soc-do-not-enable-page-pool-sta.patch
           echo 'Omitted MediaTek Ethernet/PPE-only backports; XR1710G uses the Airoha EN7581 SoC.'
 
+      - name: Omit Airoha backports already present in pinned Linux 6.18.53
+        working-directory: openwrt
+        run: |
+          set -eu
+          kernel_tarball=dl/linux-6.18.53.tar.xz
+          test -s "$kernel_tarball"
+          python3 - "$kernel_tarball" <<'PY'
+          import sys
+          import tarfile
+          from pathlib import Path
+
+          archive = tarfile.open(sys.argv[1], "r:xz")
+
+          def source(path):
+              member = archive.extractfile(f"linux-6.18.53/{path}")
+              if member is None:
+                  raise SystemExit(f"Missing pinned kernel source file: {path}")
+              return member.read().decode()
+
+          patches = Path("target/linux/airoha/patches-6.18")
+
+          pinctrl = source("drivers/pinctrl/mediatek/pinctrl-airoha.c")
+          start = pinctrl.index(
+              "static const struct airoha_pinctrl_match_data an7583_pinctrl_match_data"
+          )
+          end = pinctrl.index("static const struct of_device_id airoha_pinctrl_of_match", start)
+          an7583 = pinctrl[start:end]
+          if ".confs = an7583_pinctrl_drive_e2_conf" not in an7583:
+              raise SystemExit("Linux 6.18.53 lacks the corrected AN7583 drive E2 config")
+          if ".confs = en7581_pinctrl_drive_e2_conf" in an7583:
+              raise SystemExit("AN7583 drive E2 config still points to the EN7581 table")
+          path = patches / "113-v6.19-pinctrl-airoha-Fix-AIROHA_PINCTRL_CONFS_DRIVE_E2.patch"
+          if "Subject: [PATCH] pinctrl: airoha: Fix AIROHA_PINCTRL_CONFS_DRIVE_E2" not in path.read_text():
+              raise SystemExit(f"Unexpected redundant pinctrl patch: {path}")
+          path.unlink()
+          print("Omitted 113: pinned Linux already has the corrected AN7583 drive-E2 table")
+
+          eth = source("drivers/net/ethernet/airoha/airoha_eth.c")
+          eth_h = source("drivers/net/ethernet/airoha/airoha_eth.h")
+          for marker in (
+              "offset += AIROHA_RX_HEADROOM;",
+              "e->dma_len = SKB_WITH_OVERHEAD(AIROHA_RX_LEN(q->buf_size));",
+              "data_len = q->skb ? AIROHA_RX_LEN(q->buf_size) : e->dma_len;",
+              "napi_build_skb(e->buf - AIROHA_RX_HEADROOM,",
+              "skb_reserve(q->skb, AIROHA_RX_HEADROOM);",
+          ):
+              if marker not in eth:
+                  raise SystemExit(f"Linux 6.18.53 lacks Airoha RX-headroom behavior: {marker}")
+          for marker in ("#define AIROHA_RX_HEADROOM", "#define AIROHA_RX_LEN(_n)"):
+              if marker not in eth_h:
+                  raise SystemExit(f"Linux 6.18.53 lacks an RX-headroom definition: {marker}")
+          path = patches / "160-v7.2-net-airoha-Reserve-RX-headroom-to-avoid-skb-realloca.patch"
+          if "Subject: [PATCH] net: airoha: Reserve RX headroom to avoid skb reallocation" not in path.read_text():
+              raise SystemExit(f"Unexpected redundant RX-headroom patch: {path}")
+          path.unlink()
+          print("Omitted 160: pinned Linux already reserves RX headroom and synchronizes DMA length")
+
+          usb = source("drivers/usb/host/Kconfig")
+          start = usb.index("config USB_XHCI_MTK")
+          block = usb[start:usb.index("\nconfig ", start + 1)]
+          if "ARCH_AIROHA" not in block:
+              raise SystemExit("Linux 6.18.53 does not enable MediaTek xHCI for Airoha")
+          path = patches / "220-08-usb-host-add-ARCH_AIROHA-in-XHCI-MTK-dependency.patch"
+          if "Subject: [PATCH 08/10] usb: host: add ARCH_AIROHA" not in path.read_text():
+              raise SystemExit(f"Unexpected redundant xHCI patch: {path}")
+          path.unlink()
+          print("Omitted 220-08: pinned Linux already enables the Airoha xHCI dependency")
+          PY
+
+      - name: Rebase Airoha thermal and SOE flowtable patches
+        working-directory: openwrt
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          thermal = Path("target/linux/airoha/patches-6.18/402-01-thermal-airoha-convert-to-regmap-API.patch")
+          text = thermal.read_text()
+          wrong = "FIELD_PREP(EN7581_FILT_INTERVAL, 379)"
+          right = "FIELD_PREP(EN7581_SEN_INTERVAL, 379)"
+          if text.count(wrong) != 2 or right in text:
+              raise SystemExit("Thermal patch no longer has the expected interval-field typo")
+          thermal.write_text(text.replace(wrong, right))
+
+          flow = Path("target/linux/airoha/patches-6.18/9999-11-netfilter-flowtable-bind-xfrm-soe-flows.patch")
+          lines = flow.read_text().splitlines()
+          header = "@@ -421,18 +487,32 @@ static int nft_flow_route_routing(const"
+          if lines.count(header) != 1:
+              raise SystemExit("Expected one known XFRM flowtable forward-path hunk")
+          hunk = lines.index(header)
+          start = next(
+              (i for i in range(hunk + 1, len(lines))
+               if lines[i].startswith("-\tif (route->tuple[dir].xmit_type == FLOW_OFFLOAD_XMIT_NEIGH &&")),
+              None,
+          )
+          if start is None:
+              raise SystemExit("Could not locate the XFRM flowtable forward-path hunk")
+          end = start
+          while end + 1 < len(lines) and lines[end + 1].startswith("-"):
+              end += 1
+          expected = [
+              "-\tif (route->tuple[dir].xmit_type == FLOW_OFFLOAD_XMIT_NEIGH &&",
+              "-\t    route->tuple[!dir].xmit_type == FLOW_OFFLOAD_XMIT_NEIGH) {",
+              "-\t\tif (nft_dev_forward_path(pkt, route, ct, dir, ft) ||",
+              "-\t\t    nft_dev_forward_path(pkt, route, ct, !dir, ft))",
+              "-\t\t\treturn -ENOENT;",
+          ]
+          if lines[start:end + 1] != expected:
+              raise SystemExit("XFRM hunk base changed; refusing an unreviewed patch rewrite")
+          lines[start:end + 1] = [
+              "-\tif (route->tuple[dir].xmit_type == FLOW_OFFLOAD_XMIT_NEIGH &&",
+              "-\t    nft_dev_forward_path(pkt, route, ct, dir, ft))",
+              "-\t\treturn -ENOENT;",
+              "-\tif (route->tuple[!dir].xmit_type == FLOW_OFFLOAD_XMIT_NEIGH &&",
+              "-\t    nft_dev_forward_path(pkt, route, ct, !dir, ft))",
+              "-\t\treturn -ENOENT;",
+          ]
+          close = next(
+              (i for i in range(start + 6, len(lines)) if lines[i] == " \t}"),
+              None,
+          )
+          if close is None:
+              raise SystemExit("Could not locate the XFRM hunk's second forward-path brace")
+          lines[close] = "+\t}"
+          flow.write_text("\n".join(lines) + "\n")
+          print("Rebased XFRM SOE flow binding onto the split forward-path checks")
+          PY
+
       - name: Preflight the complete Linux kernel patch stack before compiling
         working-directory: openwrt
         run: |
@@ -716,8 +843,24 @@ jobs:
           new = "\n".join(
               (
                   "    if [ $? != 0 ] ; then",
-                  "        echo \"Preflight failed patch: $i\"",
-                  "        printf '%s\\n' \"$i\" >> \"${XR1710G_PATCH_FAILURES:?}\"",
+                  "        if [ \"${i##*/}\" = \"180-01-v7.2-pinctrl-Move-Airoha-driver-to-dedicated-directory.patch\" ] && \\",
+                  "           test -s drivers/pinctrl/airoha/pinctrl-airoha.c && \\",
+                  "           test -f drivers/pinctrl/mediatek/pinctrl-airoha.c && \\",
+                  "           test -s drivers/pinctrl/mediatek/pinctrl-airoha.c.rej && \\",
+                  "           test \"$(grep -c '^@@ ' drivers/pinctrl/mediatek/pinctrl-airoha.c.rej)\" -eq 1 && \\",
+                  "           grep -Fq '@@ -1,3032 +0,0 @@' drivers/pinctrl/mediatek/pinctrl-airoha.c.rej && \\",
+                  "           grep -Fq 'drivers/pinctrl/airoha/Kconfig' drivers/pinctrl/Kconfig && \\",
+                  "           grep -Fq '+= airoha/' drivers/pinctrl/Makefile && \\",
+                  "           grep -Fq 'config PINCTRL_AIROHA' drivers/pinctrl/airoha/Kconfig && \\",
+                  "           grep -Fq 'obj-$(CONFIG_PINCTRL_AIROHA)' drivers/pinctrl/airoha/Makefile && \\",
+                  "           ! grep -Fq 'PINCTRL_AIROHA' drivers/pinctrl/mediatek/Kconfig && \\",
+                  "           ! grep -Fq 'pinctrl-airoha.o' drivers/pinctrl/mediatek/Makefile; then",
+                  "            rm -f drivers/pinctrl/mediatek/pinctrl-airoha.c drivers/pinctrl/mediatek/pinctrl-airoha.c.rej drivers/pinctrl/mediatek/pinctrl-airoha.c.orig",
+                  "            echo 'Recovered the pinctrl move; the old-file removal hunk targeted an outdated copy.'",
+                  "        else",
+                  "            echo \"Preflight failed patch: $i\"",
+                  "            printf '%s\\n' \"$i\" >> \"${XR1710G_PATCH_FAILURES:?}\"",
+                  "        fi",
                   "    fi",
               )
           )
