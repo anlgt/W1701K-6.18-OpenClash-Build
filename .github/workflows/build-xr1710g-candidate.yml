@@ -37,14 +37,6 @@ jobs:
       run:
         shell: bash
     steps:
-      - name: Checkout isolated build definition
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-        with:
-          persist-credentials: false
-          sparse-checkout-cone-mode: false
-          sparse-checkout: |
-            /*
-            !/w1700k-private/
       - name: Install build and validation dependencies
         run: |
           sudo apt-get update
@@ -55,16 +47,22 @@ jobs:
             ccache curl patch quilt swig libelf-dev libzstd-dev zstd \
             cmake ninja-build pkgconf libtool autoconf automake autopoint \
             device-tree-compiler u-boot-tools squashfs-tools shellcheck
-      - name: Reclaim runner space
-        uses: easimon/maximize-build-space@c28619d8999a147d5e09c1199f84ff6af6ad5794
+      - name: Reclaim unused SDK space without remounting the checkout
+        run: |
+          # Ephemeral GitHub-hosted runner only. Keep its filesystem layout intact.
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc
+          sudo apt-get clean
+          df -h "$GITHUB_WORKSPACE"
+          available=$(df --output=avail -k "$GITHUB_WORKSPACE" | tail -1)
+          test "$available" -ge 41943040
+      - name: Checkout isolated build definition
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
-          root-reserve-mb: 6144
-          swap-size-mb: 2048
-          remove-android: true
-          remove-codeql: true
-          remove-docker-images: true
-          remove-dotnet: true
-          remove-haskell: true
+          persist-credentials: false
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /*
+            !/w1700k-private/
       - name: Validate build scripts
         run: |
           python3 -m py_compile scripts/xr1710g/*.py
