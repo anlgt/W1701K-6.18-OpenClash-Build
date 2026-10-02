@@ -843,7 +843,7 @@ jobs:
           new = "\n".join(
               (
                   "    if [ $? != 0 ] ; then",
-                  "        if [[ \"$i\" == *180-01-v7.2-pinctrl-Move-Airoha-driver-to-dedicated-directory.patch ]]; then",
+                  "        if [ -z \"${i##*180-01-v7.2-pinctrl-Move-Airoha-driver-to-dedicated-directory.patch}\" ]; then",
                   "            rm -f drivers/pinctrl/mediatek/pinctrl-airoha.c drivers/pinctrl/mediatek/pinctrl-airoha.c.rej drivers/pinctrl/mediatek/pinctrl-airoha.c.orig",
                   "            echo 'Recovered the pinctrl move; the old-file removal hunk targeted an outdated copy.'",
                   "        else",
