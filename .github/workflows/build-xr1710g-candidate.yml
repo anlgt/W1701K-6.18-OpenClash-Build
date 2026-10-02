@@ -1,0 +1,182 @@
+name: Build XR1710G UBI2 Pinned Candidate
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [xr1710g-cloud-repair-20261002]
+    paths:
+      - .github/workflows/build-xr1710g-candidate.yml
+      - scripts/xr1710g/**
+      - xr1710g-candidate.config
+      - xr1710g-files/**
+
+permissions:
+  contents: read
+concurrency:
+  group: xr1710g-candidate-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  SOURCE_URL: https://github.com/naoki66/ImmortalWrt-for-Gemtek-brightspeed.git
+  SOURCE_COMMIT: ba2d9bc4f3bd3ab731efb16e62d76cff0651e17c
+  PACKAGES_COMMIT: 6d68ffeb270860be5d73ee2898d58e7c6019d9a4
+  LUCI_COMMIT: adc898b447eb4ee8023398182f5d0de2e8817e81
+  ROUTING_COMMIT: 4b9891b9136259f93294a424507ed24c5e8c1cbd
+  TELEPHONY_COMMIT: 5d68d53c160a325ea9d03fce393e051573bcc736
+  OPENCLASH_COMMIT: c3a33c1d3407956fdf8f0e0b7c1a4c52e6ad9593
+  ARGON_COMMIT: 2a28799ca063aba7edc3314143b93c8325c86df4
+  MIHOMO_URL: https://github.com/MetaCubeX/mihomo/releases/download/v1.19.30/mihomo-linux-arm64-v1.19.30.gz
+  MIHOMO_SHA256: 58896873736d28628f66de3677c8654fa0f180662523148e136cff4f6e890069
+  TZ: UTC
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 350
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout isolated build definition
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /*
+            !/w1700k-private/
+      - name: Install build and validation dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential clang \
+            gcc-multilib g++-multilib binutils bzip2 gawk gettext git libncurses-dev \
+            libssl-dev python3 python3-setuptools python3-yaml python3-pyelftools \
+            rsync unzip wget xsltproc zlib1g-dev file perl sed make flex bison \
+            ccache curl patch quilt swig libelf-dev libzstd-dev zstd \
+            cmake ninja-build pkgconf libtool autoconf automake autopoint \
+            device-tree-compiler u-boot-tools squashfs-tools shellcheck
+      - name: Reclaim runner space
+        uses: easimon/maximize-build-space@c28619d8999a147d5e09c1199f84ff6af6ad5794
+        with:
+          root-reserve-mb: 6144
+          swap-size-mb: 2048
+          remove-android: true
+          remove-codeql: true
+          remove-docker-images: true
+          remove-dotnet: true
+          remove-haskell: true
+      - name: Validate build scripts
+        run: |
+          python3 -m py_compile scripts/xr1710g/*.py
+          python3 -m unittest discover -s scripts/xr1710g -p 'test_*.py' -v
+          sh -n xr1710g-files/etc/uci-defaults/99-xr1710g-custom-defaults
+      - name: Fetch exact reference source and apply guarded changes
+        run: |
+          git init openwrt
+          git -C openwrt remote add origin "$SOURCE_URL"
+          git -C openwrt fetch --depth 1 origin "$SOURCE_COMMIT"
+          git -C openwrt checkout --detach FETCH_HEAD
+          test "$(git -C openwrt rev-parse HEAD)" = "$SOURCE_COMMIT"
+          python3 scripts/xr1710g/prepare-source.py openwrt
+          git -C openwrt diff --exit-code -- scripts/patch-kernel.sh target/linux/generic/kernel-6.18 target/linux/generic/backport-6.18 target/linux/generic/pending-6.18 target/linux/generic/hack-6.18 target/linux/airoha/patches-6.18 package/kernel/mt76 package/network/config/airoha-an7581-mt7996-board/files/etc/board.d/03_wifi_defaults package/network/config/airoha-an7581-mt7996-board/files/etc/uci-defaults/03_wireless
+          mkdir -p output/build-record
+          git -C openwrt diff --binary > output/build-record/source-changes.patch
+      - name: Pin and prepare matching feeds and apps
+        working-directory: openwrt
+        run: |
+          printf '%s\n' \
+            "src-git packages https://github.com/immortalwrt/packages.git^$PACKAGES_COMMIT" \
+            "src-git luci https://github.com/immortalwrt/luci.git^$LUCI_COMMIT" \
+            "src-git routing https://github.com/openwrt/routing.git^$ROUTING_COMMIT" \
+            "src-git telephony https://github.com/openwrt/telephony.git^$TELEPHONY_COMMIT" > feeds.conf
+          ./scripts/feeds update -a
+          test "$(git -C feeds/packages rev-parse HEAD)" = "$PACKAGES_COMMIT"
+          test "$(git -C feeds/luci rev-parse HEAD)" = "$LUCI_COMMIT"
+          test "$(git -C feeds/routing rev-parse HEAD)" = "$ROUTING_COMMIT"
+          test "$(git -C feeds/telephony rev-parse HEAD)" = "$TELEPHONY_COMMIT"
+          ./scripts/feeds install -a
+          FEED_PATCHES_STRICT=1 bash scripts/apply-feed-patches.sh
+          clone_pinned() {
+            git init "$3"
+            git -C "$3" remote add origin "$1"
+            git -C "$3" fetch --depth 1 origin "$2"
+            git -C "$3" checkout --detach FETCH_HEAD
+            test "$(git -C "$3" rev-parse HEAD)" = "$2"
+          }
+          # Replace only feed symlinks to avoid duplicate package definitions.
+          for app in luci-theme-argon luci-app-openclash; do
+            for feed in luci packages; do
+              path="package/feeds/$feed/$app"
+              if [ -L "$path" ]; then rm "$path"; fi
+            done
+          done
+          clone_pinned https://github.com/vernesong/OpenClash.git "$OPENCLASH_COMMIT" package/OpenClash
+          clone_pinned https://github.com/jerrykuku/luci-theme-argon.git "$ARGON_COMMIT" package/extra/luci-theme-argon
+          grep -Fqx 'PKG_VERSION:=0.47.156' package/OpenClash/luci-app-openclash/Makefile
+          curl -fL --retry 5 --retry-all-errors "$MIHOMO_URL" -o /tmp/mihomo.gz
+          echo "$MIHOMO_SHA256  /tmp/mihomo.gz" | sha256sum -c -
+          gzip -t /tmp/mihomo.gz
+          install -d package/OpenClash/luci-app-openclash/root/etc/openclash/core
+          gzip -dc /tmp/mihomo.gz > package/OpenClash/luci-app-openclash/root/etc/openclash/core/clash_meta
+          chmod 0755 package/OpenClash/luci-app-openclash/root/etc/openclash/core/clash_meta
+          file package/OpenClash/luci-app-openclash/root/etc/openclash/core/clash_meta | grep -q 'ARM aarch64'
+      - name: Resolve and verify requested target and packages
+        run: |
+          cp xr1710g-candidate.config openwrt/.config
+          install -d openwrt/files
+          cp -a xr1710g-files/. openwrt/files/
+          chmod 0755 openwrt/files/etc/uci-defaults/99-xr1710g-custom-defaults
+          printf '%s\n' "build_definition=$GITHUB_SHA" "source_commit=$SOURCE_COMMIT" \
+            'kernel=6.18.52' 'hardware_validation=NOT RUN' 'candidate_only=yes' \
+            'wifi_initial_state=reference defaults; owner will configure after first login' \
+            > openwrt/files/etc/xr1710g-build-info
+          make -C openwrt defconfig
+          python3 scripts/xr1710g/verify-config.py openwrt/.config
+          bash openwrt/scripts/check-gemtek-profile-isolation.sh --config openwrt/.config
+          cp openwrt/.config output/build-record/resolved.config
+          (cd openwrt && ./scripts/diffconfig.sh) > output/build-record/resolved.diffconfig
+      - name: Strict download gate
+        working-directory: openwrt
+        run: |
+          # prepare-source fixes the upstream foreach recipe to stop on ANY failure.
+          # One bounded retry handles transient mirrors; the final failure propagates.
+          make download -j4 V=s 2>&1 | tee download.log || \
+            make download -j1 V=s 2>&1 | tee download-retry.log
+          echo '2b69564f7d4fea0c859b1959ba33709ee6e9139bd100e30a853b57159a8221b8  dl/linux-6.18.52.tar.xz' | sha256sum -c -
+      - name: Strict native kernel and wireless patch preflight
+        working-directory: openwrt
+        run: |
+          make -j2 tools/install 2>&1 | tee tools.log
+          make -j1 target/linux/prepare V=s 2>&1 | tee kernel-prepare.log
+          make -j1 package/kernel/mac80211/prepare V=s 2>&1 | tee mac80211-prepare.log
+          make -j1 package/kernel/mt76/prepare V=s 2>&1 | tee mt76-prepare.log
+          if find build_dir -type f -name '*.rej' -print -quit | grep -q .; then
+            echo 'Rejected patch hunks remain'; exit 1
+          fi
+          git diff --exit-code -- scripts/patch-kernel.sh
+      - name: Build candidate with failure propagation
+        working-directory: openwrt
+        run: |
+          make -j2 world 2>&1 | tee build.log || make -j1 world V=s 2>&1 | tee build-retry.log
+      - name: Validate actual firmware and collect evidence
+        run: bash scripts/xr1710g/package-output.sh
+      - name: Upload validated candidate and evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: XR1710G-UBI2-6.18.52-candidate-${{ github.run_id }}-${{ github.run_attempt }}
+          path: output/
+          retention-days: 90
+          compression-level: 0
+          if-no-files-found: error
+      - name: Upload diagnostic logs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: XR1710G-candidate-logs-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            openwrt/*.log
+            openwrt/logs/
+            output/build-record/
+          retention-days: 30
+          if-no-files-found: warn
+# Deliberately artifact-only: no release creation, deployment, merge or flashing.
