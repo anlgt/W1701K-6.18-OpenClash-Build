@@ -358,6 +358,18 @@ jobs:
           rm "$qca8k_patch"
           test ! -e "$qca8k_patch"
 
+      - name: Rebase nft flow bridging backport onto Linux 6.18.53
+        run: |
+          set -eu
+          patch=patches/xr1710g/675-02-nft_flow_offload-add-bridging-support.patch
+          target=openwrt/target/linux/generic/pending-6.18/675-02-nft_flow_offload-add-bridging-support.patch
+          test -s "$patch"
+          grep -Fq 'route->tuple[dir].out.ifindex = info.outdev->ifindex;' "$patch"
+          grep -Fq 'nft_dev_forward_path(pkt, route, ct, dir, ft)' "$patch"
+          test -f "$target"
+          install -m 0644 "$patch" "$target"
+          cmp -s "$patch" "$target"
+
       - name: Omit unrelated RTL8365MB backports that do not apply to Linux 6.18.53
         working-directory: openwrt
         run: |
