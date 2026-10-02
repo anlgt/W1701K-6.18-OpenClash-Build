@@ -318,6 +318,47 @@ jobs:
             exit 1
           fi
 
+      - name: Skip Airoha power-domain backport already present in Linux 6.18.53
+        working-directory: openwrt
+        run: |
+          set -eu
+          kernel_tarball=dl/linux-6.18.53.tar.xz
+          source_path=linux-6.18.53/drivers/pmdomain/mediatek/Kconfig
+          patch=target/linux/airoha/patches-6.18/0403-pmdomain-airoha-expose-kconfig-symbol-on-ARCH_AIROHA.patch
+          source_file=/tmp/airoha-pmdomain-Kconfig-linux-6.18.53
+          test -s "$kernel_tarball"
+          test -s "$patch"
+          grep -Fq 'Subject: [PATCH] pmdomain: airoha: expose Kconfig symbol on ARCH_AIROHA' "$patch"
+          tar -xOf "$kernel_tarball" "$source_path" > "$source_file"
+          python3 - "$source_file" <<'PY'
+          from pathlib import Path
+          import sys
+
+          text = Path(sys.argv[1]).read_text()
+          start = text.index('menu "MediaTek PM Domains"')
+          end = text.index("endmenu", start) + len("endmenu")
+          menu = text[start:end]
+          symbol = "config AIROHA_CPU_PM_DOMAIN"
+          if symbol in menu:
+              raise SystemExit("Airoha power-domain symbol is still inside the MediaTek-only menu")
+          outside = text[end:]
+          if symbol not in outside:
+              raise SystemExit("Linux 6.18.53 does not expose the Airoha power-domain symbol outside the menu")
+          block = outside[outside.index(symbol):]
+          required = (
+              "depends on ARCH_AIROHA || COMPILE_TEST",
+              "depends on HAVE_ARM_SMCCC",
+              "depends on PM",
+              "select PM_GENERIC_DOMAINS",
+          )
+          for line in required:
+              if line not in block:
+                  raise SystemExit(f"Linux 6.18.53 Airoha power-domain config is missing: {line}")
+          PY
+          rm "$patch"
+          test ! -e "$patch"
+          echo 'Omitted redundant Airoha power-domain backport; Linux 6.18.53 already exposes the symbol under ARCH_AIROHA.'
+
       - name: Skip backports already included in Linux 6.18.53
         working-directory: openwrt
         run: |
