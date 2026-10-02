@@ -412,17 +412,27 @@ jobs:
           done
           test ! -e target/linux/generic/backport-6.18/942-04-v7.2-net-dsa-realtek-rtl8365mb-prepare-for-multiple-sourc.patch
 
-      - name: Omit unrelated MTK Ethernet SerDes backport for this Airoha target
+      - name: Omit unrelated MediaTek Ethernet and PPE backports for this Airoha target
         working-directory: openwrt
         run: |
           set -eu
-          patch=target/linux/generic/pending-6.18/737-09-net-ethernet-mtk_eth_soc-add-paths-and-SerDes-modes-.patch
-          test -s "$patch"
-          grep -Fq 'Subject: [PATCH 4/4] net: ethernet: mtk_eth_soc: add paths and SerDes modes' "$patch"
-          grep -Fq 'for MT7988' "$patch"
-          rm "$patch"
-          test ! -e "$patch"
-          echo 'Omitted MTK Ethernet-only backport; XR1710G uses the Airoha EN7581 SoC.'
+          shopt -s nullglob
+          patches=(target/linux/generic/pending-6.18/*net-ethernet-mtk_eth_soc*.patch \
+            target/linux/generic/pending-6.18/*net-ethernet-mtk_ppe*.patch)
+          if [[ "${#patches[@]}" -ne 21 ]]; then
+            printf 'Expected 21 unrelated MediaTek Ethernet/PPE patches, found %s\n' "${#patches[@]}"
+            exit 1
+          fi
+          for patch in "${patches[@]}"; do
+            test -s "$patch"
+            grep -Eq '^Subject: .*net: ethernet: mtk_(eth_soc|ppe)' "$patch"
+            printf 'Omitting non-target MediaTek Ethernet/PPE patch: %s\n' "$patch"
+            rm "$patch"
+            test ! -e "$patch"
+          done
+          test ! -e target/linux/generic/pending-6.18/738-01-net-ethernet-mtk_eth_soc-reduce-rx-ring-size-for-older.patch
+          test ! -e target/linux/generic/pending-6.18/738-02-net-ethernet-mtk_eth_soc-do-not-enable-page-pool-sta.patch
+          echo 'Omitted MediaTek Ethernet/PPE-only backports; XR1710G uses the Airoha EN7581 SoC.'
 
       - name: Build the XR1710G sysupgrade
         working-directory: openwrt
