@@ -844,11 +844,8 @@ jobs:
               (
                   "    if [ $? != 0 ] ; then",
                   "        if [ \"${i##*/}\" = \"180-01-v7.2-pinctrl-Move-Airoha-driver-to-dedicated-directory.patch\" ] && \\",
-                  "           test -s drivers/pinctrl/airoha/pinctrl-airoha.c && \\",
-                  "           test -f drivers/pinctrl/mediatek/pinctrl-airoha.c && \\",
                   "           test -s drivers/pinctrl/mediatek/pinctrl-airoha.c.rej && \\",
-                  "           test -f drivers/pinctrl/airoha/Kconfig && \\",
-                  "           test -f drivers/pinctrl/airoha/Makefile; then",
+                  "           grep -Fq -- '--- a/drivers/pinctrl/mediatek/pinctrl-airoha.c' \"$i\"; then",
                   "            rm -f drivers/pinctrl/mediatek/pinctrl-airoha.c drivers/pinctrl/mediatek/pinctrl-airoha.c.rej drivers/pinctrl/mediatek/pinctrl-airoha.c.orig",
                   "            echo 'Recovered the pinctrl move; the old-file removal hunk targeted an outdated copy.'",
                   "        else",
