@@ -275,7 +275,7 @@ jobs:
           cd openwrt
           make defconfig
 
-          required_packages='apk-mbedtls luci-base luci-mod-admin-full luci-app-firewall luci-compat luci-i18n-base-zh-cn luci-theme-argon luci-app-openclash bash ca-bundle curl dnsmasq-full ip-full kmod-inet-diag kmod-nft-tproxy kmod-tun ruby ruby-yaml unzip luci-app-upnp miniupnpd-nftables irqbalance luci-app-irqbalance luci-app-airoha-npu xr1710g-status-core luci-i18n-airoha-npu-zh-cn luci-app-airoha-fancontrol luci-i18n-airoha-fancontrol-zh-cn airoha-en7581-mt7996-npu-firmware fitblk kmod-hwmon-nct7802 kmod-mt7996e kmod-mt7996-firmware kmod-nft-offload kmod-phy-realtek rtl826x-firmware wpad-basic-mbedtls'
+          required_packages='apk-mbedtls luci-base luci-mod-admin-full luci-app-firewall luci-compat luci-i18n-base-zh-cn luci-theme-argon luci-app-openclash bash ca-bundle curl dnsmasq-full ip-full kmod-inet-diag kmod-nft-tproxy kmod-tun ruby ruby-yaml unzip luci-app-upnp luci-i18n-upnp-zh-cn miniupnpd-nftables coreutils-nohup etherwake irqbalance luci-app-irqbalance luci-i18n-irqbalance-zh-cn luci-app-airoha-npu xr1710g-status-core luci-i18n-airoha-npu-zh-cn luci-app-airoha-fancontrol luci-i18n-airoha-fancontrol-zh-cn airoha-en7581-mt7996-npu-firmware fitblk kmod-hwmon-nct7802 kmod-mt7996e kmod-mt7996-firmware kmod-nft-offload kmod-phy-realtek rtl826x-firmware wpad-basic-mbedtls'
           for package_name in $required_packages; do
             grep -Fqx "CONFIG_PACKAGE_${package_name}=y" .config || {
               echo "Required package was not selected: $package_name"
@@ -291,7 +291,7 @@ jobs:
             }
           done
 
-          forbidden_packages='luci-theme-bootstrap luci-theme-glass luci-app-argon-config luci-i18n-argon-config-zh-cn luci-app-package-manager luci-app-airoha-flowsense luci-app-mlo luci-i18n-glass-zh-cn luci-i18n-mlo-zh-cn ethtool-full iperf3 kmod-airoha-net-debug mdio-tools openssh-sftp-server phytool tcpdump btop coreutils-nohup etherwake kmod-wireguard wireguard-tools luci-proto-wireguard'
+          forbidden_packages='luci-theme-bootstrap luci-theme-glass luci-app-argon-config luci-i18n-argon-config-zh-cn luci-app-package-manager luci-app-airoha-flowsense luci-app-mlo luci-i18n-glass-zh-cn luci-i18n-mlo-zh-cn ethtool-full iperf3 kmod-airoha-net-debug mdio-tools openssh-sftp-server phytool tcpdump btop kmod-wireguard wireguard-tools luci-proto-wireguard'
           for package_name in $forbidden_packages; do
             if grep -Fqx "CONFIG_PACKAGE_${package_name}=y" .config; then
               echo "Forbidden package was selected: $package_name"
@@ -412,6 +412,18 @@ jobs:
           done
           test ! -e target/linux/generic/backport-6.18/942-04-v7.2-net-dsa-realtek-rtl8365mb-prepare-for-multiple-sourc.patch
 
+      - name: Omit unrelated MTK Ethernet SerDes backport for this Airoha target
+        working-directory: openwrt
+        run: |
+          set -eu
+          patch=target/linux/generic/pending-6.18/737-09-net-ethernet-mtk_eth_soc-add-paths-and-SerDes-modes-.patch
+          test -s "$patch"
+          grep -Fq 'Subject: [PATCH 4/4] net: ethernet: mtk_eth_soc: add paths and SerDes modes' "$patch"
+          grep -Fq 'for MT7988' "$patch"
+          rm "$patch"
+          test ! -e "$patch"
+          echo 'Omitted MTK Ethernet-only backport; XR1710G uses the Airoha EN7581 SoC.'
+
       - name: Build the XR1710G sysupgrade
         working-directory: openwrt
         run: |
@@ -427,7 +439,7 @@ jobs:
           test -n "$manifest" && test -s "$manifest"
           test -n "$sysupgrade" && test -s "$sysupgrade"
 
-          required_manifest='luci-theme-argon luci-app-openclash bash curl dnsmasq-full kmod-inet-diag kmod-nft-tproxy kmod-tun ruby ruby-yaml unzip luci-app-upnp miniupnpd-nftables irqbalance luci-app-irqbalance luci-app-airoha-npu xr1710g-status-core luci-app-airoha-fancontrol airoha-en7581-mt7996-npu-firmware fitblk kmod-hwmon-nct7802 kmod-i2c-an7581 kmod-mt7996e kmod-mt7996-firmware kmod-nft-offload kmod-phy-realtek rtl826x-firmware wpad-basic-mbedtls'
+          required_manifest='luci-theme-argon luci-app-openclash bash curl dnsmasq-full kmod-inet-diag kmod-nft-tproxy kmod-tun ruby ruby-yaml unzip luci-app-upnp luci-i18n-upnp-zh-cn miniupnpd-nftables coreutils-nohup etherwake irqbalance luci-app-irqbalance luci-i18n-irqbalance-zh-cn luci-app-airoha-npu xr1710g-status-core luci-app-airoha-fancontrol airoha-en7581-mt7996-npu-firmware fitblk kmod-hwmon-nct7802 kmod-i2c-an7581 kmod-mt7996e kmod-mt7996-firmware kmod-nft-offload kmod-phy-realtek rtl826x-firmware wpad-basic-mbedtls'
           for package_name in $required_manifest; do
             grep -q "^${package_name} - " "$manifest" || {
               echo "Required package missing from firmware: $package_name"
@@ -435,7 +447,7 @@ jobs:
             }
           done
 
-          forbidden_manifest='luci-theme-bootstrap luci-theme-glass luci-app-argon-config luci-i18n-argon-config-zh-cn luci-app-package-manager luci-app-airoha-flowsense luci-app-mlo ethtool-full iperf3 kmod-airoha-net-debug mdio-tools openssh-sftp-server phytool tcpdump btop coreutils-nohup etherwake kmod-wireguard wireguard-tools luci-proto-wireguard'
+          forbidden_manifest='luci-theme-bootstrap luci-theme-glass luci-app-argon-config luci-i18n-argon-config-zh-cn luci-app-package-manager luci-app-airoha-flowsense luci-app-mlo ethtool-full iperf3 kmod-airoha-net-debug mdio-tools openssh-sftp-server phytool tcpdump btop kmod-wireguard wireguard-tools luci-proto-wireguard'
           for package_name in $forbidden_manifest; do
             if grep -q "^${package_name} - " "$manifest"; then
               echo "Forbidden package present in firmware: $package_name"
@@ -516,7 +528,7 @@ jobs:
             '- Uses the public YYH XR1710G integration tree at its verified commit with the verified Linux 6.18.53 stable tarball/hash.' \
             '- Carries the v1.9 tag public MT76 backports 0102-0105, the NPU-stack rebase, and PPE local-flow guard 9991.' \
             '- Skips the OpenWrt MHI IRQ and QCA8K force-mode backports because Linux 6.18.53 already contains both changes.' \
-            '- Includes Simplified Chinese LuCI, Argon, OpenClash + ARM64 Mihomo, UPnP, irqbalance, Airoha SoC Status, Airoha Fan Control and NPU/PPE support.' \
+            '- Includes Simplified Chinese LuCI, Argon, OpenClash + ARM64 Mihomo, UPnP, nohup, etherwake, irqbalance, Airoha SoC Status, Airoha Fan Control and NPU/PPE support.' \
             '- This is a best-effort kernel reconstruction. The v1.9 matching source is unpublished, so this image is not claimed to reproduce its binary or its release-only EHT320, RX/LRO, MLO/OWE and LuCI-cache changes.' \
             '- Argon is the only LuCI theme.' \
             '- Does not include FlowSense, MLO management, Argon configuration app, package-manager UI, diagnostic bundles or WireGuard packages.' \
