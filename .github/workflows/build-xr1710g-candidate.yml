@@ -68,6 +68,7 @@ jobs:
           python3 -m py_compile scripts/xr1710g/*.py
           python3 -m unittest discover -s scripts/xr1710g -p 'test_*.py' -v
           sh -n xr1710g-files/etc/uci-defaults/99-xr1710g-custom-defaults
+          bash scripts/xr1710g/test-extraction.sh
       - name: Fetch exact reference source and apply guarded changes
         run: |
           git init openwrt
@@ -111,6 +112,14 @@ jobs:
           clone_pinned https://github.com/vernesong/OpenClash.git "$OPENCLASH_COMMIT" package/OpenClash
           clone_pinned https://github.com/jerrykuku/luci-theme-argon.git "$ARGON_COMMIT" package/extra/luci-theme-argon
           grep -Fqx 'PKG_VERSION:=0.47.156' package/OpenClash/luci-app-openclash/Makefile
+          python3 - <<'PYCORE'
+          from pathlib import Path
+          p = Path('package/OpenClash/luci-app-openclash/Makefile')
+          text = p.read_text()
+          marker = 'include $(INCLUDE_DIR)/package.mk\n'
+          assert text.count(marker) == 1
+          p.write_text(text.replace(marker, marker + '\n# Preserve the already-built, hash-verified upstream Mihomo ELF exactly.\nRSTRIP:=:\n', 1))
+          PYCORE
           curl -fL --retry 5 --retry-all-errors "$MIHOMO_URL" -o /tmp/mihomo.gz
           echo "$MIHOMO_SHA256  /tmp/mihomo.gz" | sha256sum -c -
           gzip -t /tmp/mihomo.gz
@@ -153,6 +162,7 @@ jobs:
           fi
           git diff --exit-code -- scripts/patch-kernel.sh
       - name: Build candidate with failure propagation
+        id: compile
         working-directory: openwrt
         run: |
           make -j2 world 2>&1 | tee build.log || make -j1 world V=s 2>&1 | tee build-retry.log
@@ -164,6 +174,23 @@ jobs:
           name: XR1710G-UBI2-6.18.52-candidate-${{ github.run_id }}-${{ github.run_attempt }}
           path: output/
           retention-days: 90
+          compression-level: 0
+          if-no-files-found: error
+      - name: Retain unvalidated image only for failure diagnosis
+        if: failure() && steps.compile.outcome == 'success'
+        run: |
+          mkdir -p unvalidated
+          cp openwrt/bin/targets/airoha/an7581/*sysupgrade.itb unvalidated/
+          cp openwrt/bin/targets/airoha/an7581/*.manifest unvalidated/
+          printf '%s\n' 'UNVALIDATED DIAGNOSTIC IMAGE. Verification did not finish. Do not flash.' > unvalidated/UNVALIDATED.txt
+          (cd unvalidated && sha256sum *.itb > IMAGE-SHA256SUMS)
+      - name: Upload unvalidated diagnostic image
+        if: failure() && steps.compile.outcome == 'success'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: XR1710G-UNVALIDATED-DIAGNOSTIC-${{ github.run_id }}-${{ github.run_attempt }}
+          path: unvalidated/
+          retention-days: 7
           compression-level: 0
           if-no-files-found: error
       - name: Upload diagnostic logs

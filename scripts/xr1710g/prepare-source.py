@@ -62,6 +62,22 @@ replace('package/luci-app-airoha/Makefile', '/etc/init.d/npu-jitter enable 2>/de
 replace('package/luci-app-airoha/Makefile', '/etc/init.d/npu-jitter stop 2>/dev/null\n/etc/init.d/npu-jitter disable 2>/dev/null\n', '')
 replace('package/luci-app-airoha/Makefile', '/etc/config/npu-monitor\n', '')
 
+# luci.mk's generic installer copies htdocs/ and root/ during BuildPackage
+# expansion. Exclude optional files at the source too, so both installation
+# paths omit them; do not rely on a later Makefile override.
+for rel in (
+    'htdocs/luci-static/resources/view/airoha_flowsense/status.js',
+    'root/usr/libexec/rpcd/luci.airoha_flowsense',
+    'root/usr/libexec/npu-jitter-daemon',
+    'root/etc/init.d/npu-jitter',
+    'root/etc/config/npu-monitor',
+):
+    p = app / rel
+    assert p.is_file(), f'Missing expected optional app file: {p}'
+    p.unlink()
+# Avoid an empty optional frontend directory being copied by LuCI's installer.
+(app / 'htdocs/luci-static/resources/view/airoha_flowsense').rmdir()
+
 # Preserve reference Wi-Fi, region and initial login defaults as requested.
 
 # Fail closed when the fan sensor is absent; never guess hwmon5 and write to it.

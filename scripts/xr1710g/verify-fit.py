@@ -49,12 +49,19 @@ def number(value): return int.from_bytes(value, 'big')
 def inspect(image, out, metadata_path, expected_compat='2.0', require_ro=True):
     data = Path(image).read_bytes()
     total, nodes = fdt(data)
-    results, payloads = {}, {}
+    results, payloads, spans = {}, {}, []
+    expected_types = {'/images/kernel-1': b'kernel\0', '/images/fdt-1': b'flat_dt\0', '/images/rootfs-1': b'filesystem\0'}
+    actual_images = {n for n in nodes if n.startswith('/images/') and n.count('/') == 2}
+    assert actual_images == set(expected_types), 'Unexpected FIT payload names'
+    for name, kind in expected_types.items():
+        assert nodes[name]['type'] == kind, 'Incorrect named FIT payload type'
+
     for name, props in nodes.items():
         if not name.startswith('/images/') or name.count('/') != 2: continue
         assert 'data-position' in props, f'{name}: expected external static FIT payload'
         pos, size = number(props['data-position']), number(props['data-size'])
         assert pos >= total and size > 0 and pos + size <= len(data)
+        spans.append((pos, pos + size))
         payload = data[pos:pos + size]
         kind = string(props['type'])
         assert kind not in payloads, 'Duplicate FIT component type'
@@ -68,6 +75,8 @@ def inspect(image, out, metadata_path, expected_compat='2.0', require_ro=True):
             hashes.append(algo)
         assert 'crc32' in hashes and 'sha1' in hashes, f'{name}: missing expected FIT checksums'
         results[name] = {'bytes': size, 'sha256': hashlib.sha256(payload).hexdigest(), 'verified_hashes': hashes}
+    spans.sort()
+    assert all(left[1] <= right[0] for left, right in zip(spans, spans[1:])), 'Overlapping FIT payloads'
     assert set(payloads) == {'kernel', 'flat_dt', 'filesystem'}, 'Unexpected image component types'
     assert string(nodes['/configurations']['default']) == 'config-1'
     config = nodes['/configurations/config-1']
@@ -100,6 +109,11 @@ def inspect(image, out, metadata_path, expected_compat='2.0', require_ro=True):
     # The caller must first use fwtool -i, which checks the metadata trailer.
     metadata = json.loads(Path(metadata_path).read_text())
     assert metadata['compat_version'] == expected_compat, 'Wrong upgrade compatibility version'
+    assert metadata['version']['target'] == 'airoha/an7581'
+    assert metadata['version']['board'] == 'gemtek_xr1710g-ubi'
+    if expected_compat == '2.0':
+        assert metadata['version']['dist'] == 'XR1710G-Candidate'
+        assert metadata['version']['version'] == '6.18.52-ubi2'
     supported = metadata.get('new_supported_devices', metadata['supported_devices'])
     assert 'gemtek,xr1710g-ubi' in supported
     assert not any('w1700' in b or 'w1701' in b or 'xg2010' in b for b in supported)

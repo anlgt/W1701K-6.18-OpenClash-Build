@@ -10,7 +10,9 @@ python3 scripts/xr1710g/verify-config.py "$manifest" --manifest
 mkdir -p output/firmware output/build-record /tmp/xr1710g-image-check
 openwrt/staging_dir/host/bin/fwtool -i output/build-record/sysupgrade-metadata.json "$image"
 python3 scripts/xr1710g/verify-fit.py "$image" /tmp/xr1710g-image-check output/build-record/sysupgrade-metadata.json
-unsquashfs -d /tmp/xr1710g-root /tmp/xr1710g-image-check/rootfs.squashfs
+# Data-only extraction: dev/console is not a regular file and is never executed.
+# Keep the default fatal exit status for every non-excluded extraction error.
+unsquashfs -excludes -d /tmp/xr1710g-root /tmp/xr1710g-image-check/rootfs.squashfs dev
 root=/tmp/xr1710g-root
 core="$root/etc/openclash/core/clash_meta"
 test -x "$core"
@@ -46,7 +48,8 @@ for f in profiles.json feeds.buildinfo version.buildinfo config.buildinfo; do
 done
 cp openwrt/files/etc/xr1710g-build-info output/build-record/
 cp .github/workflows/build-xr1710g-candidate.yml output/build-record/workflow.yml
-cp scripts/xr1710g/*.py scripts/xr1710g/package-output.sh output/build-record/
+cp scripts/xr1710g/*.py scripts/xr1710g/*.sh output/build-record/
+git -C openwrt/package/OpenClash diff --binary > output/build-record/openclash-packaging.patch
 for feed in packages luci routing telephony; do
   git -C "openwrt/feeds/$feed" diff --binary > "output/build-record/feed-$feed.patch"
 done
@@ -67,11 +70,14 @@ it does not validate the actual device bootloader, partition map or backups.
 Reference Wi-Fi SSIDs, broadcast/authentication, country and login defaults are
 preserved at the owner's request. Change default credentials and select the
 correct local Wi-Fi country after first login.
-No private password, subscription or SSH host key is embedded.
+No personal password, subscription or SSH host key is embedded.
+Reference embedded root password is empty, but existing bootloader/environment
+provisioning may supply Wi-Fi/admin credentials or SSH keys at first boot.
 
 PASSED: source/feed pins, config/package gates, native kernel and MT76 prepare,
 full compile, profile isolation, manifest, fwtool metadata, FIT payload hashes,
-compiled DTB partition/boot contract, actual squashfs contents, Mihomo checksum.
+compiled DTB partition/boot contract, actual squashfs regular-file contents
+(device nodes are not materialized), Mihomo checksum.
 NOT RUN: boot, sysupgrade on the device, LAN/WAN, Wi-Fi 7, offload/OpenClash
 interaction, temperature/fan response, reboot persistence, soak or recovery.
 
