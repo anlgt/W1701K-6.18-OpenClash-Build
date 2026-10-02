@@ -448,6 +448,48 @@ jobs:
           test ! -e "$pwm_patch" && test ! -e "$an7583_patch"
           echo 'Omitted redundant PWM and AN7583 pinctrl backports; Linux 6.18.53 already contains these conversions and SoC descriptors.'
 
+      - name: Remove the truncated no-op Airoha NPU generic backport
+        working-directory: openwrt
+        run: |
+          set -eu
+          kernel_tarball=dl/linux-6.18.53.tar.xz
+          source_path=linux-6.18.53/include/linux/soc/airoha/airoha_offload.h
+          patch=target/linux/airoha/patches-6.18/111-v6.19-wifi-mt76-Introduce-the-NPU-generic-layer.patch
+          source_file=/tmp/airoha-offload-linux-6.18.53.h
+          test -s "$kernel_tarball"
+          test -s "$patch"
+          grep -Fq 'Subject: [PATCH] wifi: mt76: Introduce the NPU generic layer' "$patch"
+          tar -xOf "$kernel_tarball" "$source_path" > "$source_file"
+          grep -Fq '#include <linux/skbuff.h>' "$source_file"
+          python3 - "$patch" <<'PY'
+          from pathlib import Path
+          import sys
+
+          path = Path(sys.argv[1])
+          text = path.read_text()
+          only_hunk = '''--- a/include/linux/soc/airoha/airoha_offload.h
++++ b/include/linux/soc/airoha/airoha_offload.h
+@@ -6,6 +6,7 @@
+ #ifndef AIROHA_OFFLOAD_H
+ #define AIROHA_OFFLOAD_H
+
++#include <linux/skbuff.h>
+ #include <linux/spinlock.h>
+ #include <linux/workqueue.h>
+'''
+          only_hunk += " \n"
+          if (
+              text.count(only_hunk) != 1
+              or not text.endswith(only_hunk)
+              or text.count("\n--- a/") != 1
+              or "\ndiff --git " in text
+          ):
+              raise SystemExit("NPU generic patch is not the expected truncated one-hunk artifact")
+          path.unlink()
+          print("Removed truncated no-op patch: declared 8 files but contains only an already-present include hunk")
+          PY
+          test ! -e "$patch"
+
       - name: Skip backports already included in Linux 6.18.53
         working-directory: openwrt
         run: |
@@ -654,41 +696,42 @@ jobs:
           set -eu
           preflight_dir=/tmp/xr1710g-kernel-patch-preflight
           mkdir -p "$preflight_dir"
-          export XR1710G_REAL_PATCH="$(command -v patch)"
           export XR1710G_PATCH_FAILURES="$preflight_dir/failures.txt"
-          test -n "$XR1710G_REAL_PATCH"
           rm -f "$XR1710G_PATCH_FAILURES"
-          cat > "$preflight_dir/patch" <<'PATCH_WRAPPER'
-          #!/usr/bin/env bash
-          set -u
-          input=$(mktemp)
-          cat > "$input"
-          if "$XR1710G_REAL_PATCH" "$@" < "$input"; then
-            status=0
-          else
-            status=$?
-          fi
-          if [ "$status" -ne 0 ]; then
-            subject=$(grep -m1 '^Subject:' "$input" || true)
-            file=$(grep -m1 '^--- a/' "$input" || true)
-            printf '%s | %s\n' "${subject:-no Subject header}" "${file:-no file header}" \
-              >> "$XR1710G_PATCH_FAILURES"
-          fi
-          rm -f "$input"
-          exit 0
-          PATCH_WRAPPER
-          chmod 0755 "$preflight_dir/patch"
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("scripts/patch-kernel.sh")
+          source = path.read_text()
+          old = '''    if [ $? != 0 ] ; then
+        echo "Patch failed!  Please fix $i!"
+\texit 1
+    fi'''
+          new = '''    if [ $? != 0 ] ; then
+        echo "Preflight failed patch: $i"
+        printf '%s\\n' "$i" >> "${XR1710G_PATCH_FAILURES:?}"
+    fi'''
+          count = source.count(old)
+          if count != 1:
+              raise SystemExit(
+                  f"Expected one patch failure handler in {path}, found {count}; refusing partial audit"
+              )
+          path.write_text(source.replace(old, new, 1))
+          print(f"Instrumented {path} to collect every patch failure")
+          PY
           set +e
-          PATCH="$preflight_dir/patch" make -j1 V=s target/linux/prepare
+          make -j1 V=s target/linux/prepare
           prepare_status=$?
           set -e
+          if [ -s "$XR1710G_PATCH_FAILURES" ]; then
+            echo 'Kernel patch preflight found these hunks that do not apply to Linux 6.18.53:'
+            sort -u "$XR1710G_PATCH_FAILURES"
+          fi
           if [ "$prepare_status" -ne 0 ]; then
             echo "Kernel prepare command failed before patch audit completed (exit $prepare_status)."
             exit "$prepare_status"
           fi
           if [ -s "$XR1710G_PATCH_FAILURES" ]; then
-            echo 'Kernel patch preflight found these hunks that do not apply to Linux 6.18.53:'
-            sort -u "$XR1710G_PATCH_FAILURES"
             exit 1
           fi
           echo 'All kernel patches applied cleanly to the pinned Linux 6.18.53 source.'
