@@ -456,6 +456,44 @@ jobs:
           test ! -e "$patch"
           echo 'Omitted xHCI backport because the pinned Linux 6.18.53 source already contains it.'
 
+      - name: Rebase kernel tools portability patch onto Linux 6.18.53
+        working-directory: openwrt
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          patch = Path("target/linux/generic/hack-6.18/200-tools_portability.patch")
+          lines = patch.read_text().splitlines()
+          markers = [
+              "@@ -72,8 +72,6 @@",
+              "@@ -84,6 +82,9 @@",
+              "@@ -95,8 +96,9 @@",
+          ]
+          positions = []
+          for marker in markers:
+              found = [i for i, line in enumerate(lines) if line.startswith(marker)]
+              if len(found) != 1:
+                  raise SystemExit(f"Expected one portability hunk {marker}, found {len(found)}")
+              positions.append(found[0])
+          first, second, third = positions
+          if not first < second < third:
+              raise SystemExit("Portability patch hunk order changed")
+          if not any(line.startswith("-CC_NO_CLANG :=") for line in lines[first:second]):
+              raise SystemExit("Expected obsolete CC_NO_CLANG move hunk was not found")
+          if not any(line.startswith("+HOSTCC_NO_CLANG :=") for line in lines[second:third]):
+              raise SystemExit("Expected HOSTCC_NO_CLANG addition was not found")
+
+          rebased_hunk = [
+              "@@ -95,1 +95,2 @@",
+              ' CC_NO_CLANG := $(shell $(CC) -dM -E -x c /dev/null | grep -Fq "__clang__"; echo $$?)',
+              '+HOSTCC_NO_CLANG := $(shell $(HOSTCC) -dM -E -x c /dev/null | grep -Fq "__clang__"; echo $$?)',
+          ]
+          lines = lines[:first] + rebased_hunk + lines[third:]
+          patch.write_text("\n".join(lines) + "\n")
+          if "@@ -72,8 +72,6 @@" in patch.read_text():
+              raise SystemExit("Obsolete CC_NO_CLANG move hunk survived the rebase")
+          PY
+
       - name: Omit unrelated MediaTek Ethernet/PPE backports for this Airoha target
         working-directory: openwrt
         run: |
