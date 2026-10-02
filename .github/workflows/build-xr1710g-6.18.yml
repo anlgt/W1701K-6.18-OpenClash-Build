@@ -412,24 +412,26 @@ jobs:
           done
           test ! -e target/linux/generic/backport-6.18/942-04-v7.2-net-dsa-realtek-rtl8365mb-prepare-for-multiple-sourc.patch
 
-      - name: Omit unrelated MediaTek Ethernet and PPE backports for this Airoha target
+      - name: Omit unrelated MediaTek Ethernet/PPE backports for this Airoha target
         working-directory: openwrt
         run: |
           set -eu
           shopt -s nullglob
-          patches=(target/linux/generic/pending-6.18/*net-ethernet-mtk_eth_soc*.patch \
+          patches=(target/linux/generic/pending-6.18/*net-ethernet-mediatek*.patch \
+            target/linux/generic/pending-6.18/*net-ethernet-mtk_eth_soc*.patch \
             target/linux/generic/pending-6.18/*net-ethernet-mtk_ppe*.patch)
-          if [[ "${#patches[@]}" -ne 21 ]]; then
-            printf 'Expected 21 unrelated MediaTek Ethernet/PPE patches, found %s\n' "${#patches[@]}"
+          if [[ "${#patches[@]}" -ne 23 ]]; then
+            printf 'Expected 23 unrelated MediaTek Ethernet/PPE patches, found %s\n' "${#patches[@]}"
             exit 1
           fi
           for patch in "${patches[@]}"; do
             test -s "$patch"
-            grep -Eq '^Subject: .*net: ethernet: mtk_(eth_soc|ppe)' "$patch"
+            grep -Eq '^Subject: .*net: ethernet: (mediatek|mtk_eth_soc|mtk_ppe)' "$patch"
             printf 'Omitting non-target MediaTek Ethernet/PPE patch: %s\n' "$patch"
             rm "$patch"
             test ! -e "$patch"
           done
+          test ! -e target/linux/generic/pending-6.18/736-04-net-ethernet-mediatek-fix-ppe-flow-accounting-for-L2.patch
           test ! -e target/linux/generic/pending-6.18/738-01-net-ethernet-mtk_eth_soc-reduce-rx-ring-size-for-older.patch
           test ! -e target/linux/generic/pending-6.18/738-02-net-ethernet-mtk_eth_soc-do-not-enable-page-pool-sta.patch
           echo 'Omitted MediaTek Ethernet/PPE-only backports; XR1710G uses the Airoha EN7581 SoC.'
