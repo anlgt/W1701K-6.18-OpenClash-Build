@@ -370,6 +370,29 @@ jobs:
           install -m 0644 "$patch" "$target"
           cmp -s "$patch" "$target"
 
+      - name: Rebase internal phylink PCS backport onto Linux 6.18.53
+        working-directory: openwrt
+        run: |
+          set -eu
+          python3 - <<'PY'
+          from pathlib import Path
+
+          patch = Path("target/linux/generic/pending-6.18/737-02-net-phylink-introduce-internal-phylink-PCS-handling.patch")
+          text = patch.read_text()
+          changes = (
+              ("-\tif (!pcs)\n+\tif (!pcs_found)", "-\tif (IS_ERR_OR_NULL(pcs))\n+\tif (!pcs_found)"),
+              (
+                  "+\t\tpcs = pl->mac_ops->mac_select_pcs(pl->config,\n+\t\t\t\t\t\t  interface);\n+\t\tpcs_found = !!pcs;",
+                  "+\t\tpcs = pl->mac_ops->mac_select_pcs(pl->config,\n+\t\t\t\t\t\t  interface);\n+\t\tpcs_found = !IS_ERR_OR_NULL(pcs);",
+              ),
+          )
+          for old, new in changes:
+              if text.count(old) != 1:
+                  raise SystemExit(f"Expected one phylink patch context, found {text.count(old)}: {old!r}")
+              text = text.replace(old, new, 1)
+          patch.write_text(text)
+          PY
+
       - name: Omit unrelated RTL8365MB backports that do not apply to Linux 6.18.53
         working-directory: openwrt
         run: |
