@@ -427,6 +427,16 @@ jobs:
           patch.write_text(text.replace(old, new))
           if new not in patch.read_text():
               raise SystemExit("Failed to update the fixed-layout MAC patch context")
+
+          patch = Path("target/linux/generic/pending-6.18/809-01-nvmem-core-generalize-mac-base-cells-handling.patch")
+          text = patch.read_text()
+          old = "static int nvmem_add_cells_from_dt(struct nvmem_device *nvmem, struct device_node *np)"
+          new = "int nvmem_add_cells_from_dt(struct nvmem_device *nvmem, struct device_node *np)"
+          if text.count(old) != 2:
+              raise SystemExit(f"Expected two outdated nvmem contexts, found {text.count(old)}")
+          patch.write_text(text.replace(old, new))
+          if old in patch.read_text():
+              raise SystemExit("Failed to update both generalized nvmem patch contexts")
           PY
 
       - name: Omit unrelated MediaTek Ethernet/PPE backports for this Airoha target
