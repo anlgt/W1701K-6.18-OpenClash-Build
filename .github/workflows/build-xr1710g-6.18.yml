@@ -439,6 +439,23 @@ jobs:
               raise SystemExit("Failed to update both generalized nvmem patch contexts")
           PY
 
+      - name: Skip xHCI backport already present in Linux 6.18.53
+        working-directory: openwrt
+        run: |
+          set -eu
+          patch=target/linux/generic/pending-6.18/891-usb-xhci-handle-port-events-when-there-is-one-roothub.patch
+          test -s "$patch"
+          grep -Fq 'Subject: [PATCH] usb: xhci: Handle USB3 port events when there is one roothub' "$patch"
+          grep -Fq 'xhci->shared_hcd == NULL' "$patch"
+          grep -Fq 'xhci_get_usb3_hcd(xhci) == NULL' "$patch"
+          curl -fsSL "https://raw.githubusercontent.com/gregkh/linux/v${KERNEL_VERSION}/drivers/usb/host/xhci-ring.c" \
+            -o /tmp/xhci-ring-linux-${KERNEL_VERSION}.c
+          grep -Fq 'if (port->rhub == &xhci->usb3_rhub && xhci_get_usb3_hcd(xhci) == NULL)' \
+            "/tmp/xhci-ring-linux-${KERNEL_VERSION}.c"
+          rm "$patch"
+          test ! -e "$patch"
+          echo 'Omitted xHCI backport because the pinned Linux 6.18.53 source already contains it.'
+
       - name: Omit unrelated MediaTek Ethernet/PPE backports for this Airoha target
         working-directory: openwrt
         run: |
