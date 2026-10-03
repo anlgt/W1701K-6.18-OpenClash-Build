@@ -1,0 +1,31 @@
+#!/bin/sh
+# Read-only link/PHY evidence. No UCI changes, resets, MDIO writes or credentials.
+echo '=== XR1710G link report (read only) ==='
+uname -r
+cat /etc/xr1710g-build-info 2>/dev/null
+for dev in cpu wan lan2 lan3 lan4; do
+	base="/sys/class/net/$dev"
+	[ -d "$base" ] || { echo "$dev: absent"; continue; }
+	echo "=== $dev ==="
+	for field in carrier operstate speed duplex; do
+		value=$(cat "$base/$field" 2>/dev/null) || value=unavailable
+		echo "$field=$value"
+	done
+	for field in rx_packets tx_packets rx_errors tx_errors rx_dropped tx_dropped; do
+		value=$(cat "$base/statistics/$field" 2>/dev/null) || value=unavailable
+		echo "$field=$value"
+	done
+	[ ! -r "$base/phydev/phy_id" ] || { printf 'phy_id='; cat "$base/phydev/phy_id"; }
+	[ ! -L "$base/phydev/driver" ] || {
+		printf 'phy_driver='
+		basename "$(readlink -f "$base/phydev/driver")"
+	}
+done
+if command -v ethtool >/dev/null 2>&1; then
+	echo '=== WAN negotiated link ==='
+	ethtool wan 2>/dev/null
+fi
+echo '=== Relevant boot messages (MAC addresses redacted) ==='
+dmesg 2>/dev/null | grep -iE 'airoha|rtl826|rtk |serdes|fbck|freqdet|phylink|renamed|firmware' |
+	sed -E 's/([[:xdigit:]]{2}:){5}[[:xdigit:]]{2}/[MAC redacted]/g' | tail -n 100
+exit 0

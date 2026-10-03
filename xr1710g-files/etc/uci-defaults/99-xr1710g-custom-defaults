@@ -17,6 +17,12 @@ if [ -x /etc/init.d/irqbalance ]; then
 	/etc/init.d/irqbalance enable || exit 1
 fi
 
+# The requested FRP client is installed but has no server or tunnel configuration.
+# Do not enable an outbound client automatically before the owner configures it.
+if [ -x /etc/init.d/frpc ]; then
+	/etc/init.d/frpc disable || exit 1
+fi
+
 # UPnP stays disabled by package default. The existing XR1710G fan curve and
 # automatic NCT7802 control remain unchanged.
 

@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Narrow, fail-closed changes to the pinned, successfully built XR1710G tree.
-No kernel/mt76 patches are removed, reordered, ignored or imported from another tree.
+Keep the native stack intact; add one audited final PCS repair without ignoring failures.
 """
 import json
+import hashlib
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -19,6 +21,24 @@ def replace(path, old, new, count=1):
 
 # Propagate the first download sub-make failure instead of returning only the last.
 replace('include/toplevel.mk', '$(SUBMAKE) $(dir);)', '$(SUBMAKE) $(dir) || exit 1;)')
+
+# Use the native rootfs disabled-service hook at BOTH assembly passes.
+# Other services retain their existing defaults.
+replace('package/Makefile',
+        '$(call prepare_rootfs,$(TARGET_DIR),$(TOPDIR)/files)',
+        '$(call prepare_rootfs,$(TARGET_DIR),$(TOPDIR)/files,frpc)')
+replace('include/image.mk',
+        '$(call prepare_rootfs,$(mkfs_cur_target_dir),$(TOPDIR)/files)',
+        '$(call prepare_rootfs,$(mkfs_cur_target_dir),$(TOPDIR)/files,frpc)')
+
+# Preserve the reference hardware DHCP client-ID default only while the
+# network is first generated; never overwrite retained explicit client-ID choices.
+replace('package/base-files/files/bin/config_generate',
+        "\t\t\tuci set network.$1.proto='dhcp'\n",
+        "\t\t\tuci set network.$1.proto='dhcp'\n"
+        "\t\t\tif [ \"$1\" = wan ] && [ \"$(cat /tmp/sysinfo/board_name 2>/dev/null)\" = gemtek,xr1710g-ubi ]; then\n"
+        "\t\t\t\tuci set network.wan.sendclientid='hardware'\n"
+        "\t\t\tfi\n")
 
 # Keep the established UBI2 compatibility contract, without touching flash layout.
 replace('target/linux/airoha/image/an7581.mk',
@@ -93,9 +113,18 @@ for name in ('package/luci-app-airoha-fancontrol/root/etc/init.d/fan',
         s = s.replace('hwmon=$(find_nct7802)', 'hwmon=$(find_nct7802) || return 1')
     p.write_text(s)
 
+# One explicit, auditable final PCS repair; native patches and MT76 stay intact.
+pcs_patch = Path(__file__).resolve().parents[2] / 'patches/xr1710g/999-03-net-pcs-airoha-restore-xr1710g-carrier-bringup.patch'
+assert hashlib.sha256(pcs_patch.read_bytes()).hexdigest() == '8059da57402c1c975d0cc3997c7d902f0160746e733db33bf687444defceac4a'
+pcs_relative = Path('target/linux/airoha/patches-6.18') / pcs_patch.name
+assert not (root/pcs_relative).exists()
+shutil.copyfile(pcs_patch, root/pcs_relative)
+# Include the newly added patch in the archived source diff, without committing.
+subprocess.run(['git', '-C', str(root), 'add', '-N', str(pcs_relative)], check=True)
+
 # Source preflight: preserve native patch machinery and hardware stack.
 assert 'exit 1' in (root / 'scripts/patch-kernel.sh').read_text()
 assert 'Recovered' not in (root / 'scripts/patch-kernel.sh').read_text()
 assert 'LINUX_VERSION-6.18 = .52' in (root / 'target/linux/generic/kernel-6.18').read_text()
 assert 'PKG_SOURCE_VERSION:=be5ce7910521492d4a2e4ce7ee3843680a46c047' in (root / 'package/kernel/mt76/Makefile').read_text()
-print('Pinned source preparation passed; kernel/MT76 patch sets unchanged')
+print('Pinned source preparation passed; native MT76 unchanged; audited final PCS carrier repair added')

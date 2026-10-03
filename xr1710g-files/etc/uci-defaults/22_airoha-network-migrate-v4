@@ -1,0 +1,183 @@
+#!/bin/sh
+# Proposed independent retained-config correctness repair. NOT a NO-CARRIER fix.
+# Replace the old 22 migration; do not run after its lossy normalizer.
+# Router dependencies: sh, uci, awk, sed, mktemp, cmp, cp, mv, chmod.
+# The optional root/uci variables isolate the host regression harness only.
+set -f
+umask 077
+ROOT=${XR_MIGRATION_ROOT:-}
+UCI=${XR_MIGRATION_UCI:-/sbin/uci}
+NETWORK="$ROOT/etc/config/network"
+log() { printf '%s\n' "xr1710g-portmap: $*" >&2; }
+skip() { log "SKIP: $*; network unchanged"; exit 0; }
+fail() { log "ERROR: $*; network unchanged"; exit 1; }
+[ "$(cat "$ROOT/tmp/sysinfo/board_name" 2>/dev/null)" = gemtek,xr1710g-ubi ] || exit 0
+[ -f "$NETWORK" ] && [ ! -L "$NETWORK" ] || skip 'network is missing or is a symlink'
+work=$(mktemp -d "$ROOT/tmp/xr1710g-portmap.XXXXXX") || exit 1
+replacement=
+trap 'rm -rf "$work"; [ -z "$replacement" ] || rm -f "$replacement"' EXIT HUP INT TERM
+pending=$("$UCI" -q changes network) || fail 'cannot inspect pending UCI changes'
+[ -z "$pending" ] || skip 'pending UCI changes'
+cp -p "$NETWORK" "$work/original" || fail 'cannot snapshot network'
+"$UCI" -q -N export network > "$work/export" || fail 'cannot export network'
+[ -s "$work/export" ] || fail 'empty UCI export'
+: > "$work/sections"; : > "$work/refs"; : > "$work/device-types"
+section=0; section_type=; section_name=; bad=; old=0; modern=0; cpu=0
+# UCI export is the shell-escaped canonical serialization, never raw config.
+# No eval is applied to values. All non-reference values are passed unchanged.
+package() { [ "$1" = network ] || bad='unexpected package'; }
+config() {
+ section=$((section + 1)); section_type=$1; section_name=${2:-}
+ case "$section_type:$section_name" in *[!A-Za-z0-9_:-]*) bad='unsupported section identifier';; esac
+ printf '%s|%s|%s\n' "$section" "$section_type" "$section_name" >> "$work/sections"
+}
+is_reference() {
+ case "$section_type:$1" in
+ interface:device|interface:ifname|device:name|device:ifname|device:ports|bridge-vlan:device|bridge-vlan:ports) return 0;;
+ *) return 1;; esac
+}
+base_of() { base=${1%%:*}; base=${base%%.*}; }
+inspect_value() {
+ key=$1; kind=$2; value=$3
+ if is_reference "$key"; then
+  case "$value" in *[!A-Za-z0-9_@.*:\ -]*|'') bad='unsupported or empty reference value'; return;; esac
+  case "$section_type:$key:$kind" in
+  interface:device:list|device:name:list|device:ifname:list|bridge-vlan:device:list) bad='unsupported list-valued scalar reference';;
+  esac
+  printf '%s|%s|%s|%s|%s\n' "$section" "$section_type" "$key" "$kind" "$value" >> "$work/refs"
+  for token in $value; do
+   base_of "$token"
+   case "$base" in eth1|eth2) old=1;; wan|lan4) modern=1;; eth0|cpu|ae_wan|lan1) cpu=1;; esac
+  done
+ else
+  if [ "$section_type:$key" = device:type ]; then
+   printf '%s|%s\n' "$section" "$value" >> "$work/device-types"
+  fi
+  # Unknown reference-bearing device fields must not be silently left stale.
+  case "$section_type:$key" in
+  device:master|device:device|device:lower|device:parent|device:slaves)
+   for token in $value; do base_of "$token"; case "$base" in eth0|eth1|eth2|lan1|lan2|lan3) bad='unsupported device reference field';; esac; done;;
+  esac
+ fi
+}
+option() { inspect_value "$1" option "$2"; }
+list() { inspect_value "$1" list "$2"; }
+. "$work/export" || fail 'cannot read canonical UCI export'
+[ -z "$bad" ] || skip "$bad"
+[ "$cpu" = 0 ] || skip 'CPU-conduit or unverified legacy naming'
+[ "$old" = 1 ] || { log 'NOCHANGE: no unambiguous .44 legacy names'; exit 0; }
+[ "$modern" = 0 ] || skip 'mixed legacy and modern physical device names'
+# Strictly limit this repair to network-bound firewall configurations.
+# Direct device rules or opaque includes might retain old names; never rewrite them.
+"$UCI" -q -N export firewall > "$work/firewall.export" || skip 'cannot audit firewall configuration'
+fw_bad=
+package() { [ "$1" = firewall ] || fw_bad='unexpected firewall export'; }
+config() {
+ case "$1" in include) fw_bad='custom firewall include requires separate review';; esac
+}
+option() {
+ case "$1" in *device*|*ifname*|in|out)
+  [ -z "$2" ] || fw_bad='direct firewall device binding requires separate review';;
+ esac
+}
+list() { option "$@"; }
+. "$work/firewall.export" || fail 'cannot audit canonical firewall export'
+[ -z "$fw_bad" ] || skip "$fw_bad"
+# Read reference values from the immutable inspected records.
+ref() { awk -F '|' -v s="$1" -v k="$2" '$1==s && $3==k { print $5 }' "$work/refs"; }
+find_section() { awk -F '|' -v t="$1" -v n="$2" '$2==t && $3==n { print $1 }' "$work/sections"; }
+find_device() { awk -F '|' -v n="$1" '$2=="device" && $3=="name" && $5==n { print $1 }' "$work/refs"; }
+one() { case "$1" in ''|*[!0-9]*) return 1;; *) return 0;; esac; }
+wan_sec=$(find_section interface wan); lan_sec=$(find_section interface lan)
+one "$wan_sec" && one "$lan_sec" || skip 'missing or duplicate named WAN/LAN interfaces'
+wan_path=$(ref "$wan_sec" device); [ -n "$wan_path" ] || wan_path=$(ref "$wan_sec" ifname)
+case "$wan_path" in ''|*' '*|*':'*|@*) skip 'unsupported WAN anchor';; esac
+# A named 802.1q/802.1ad parent can resolve to eth1. Parent cycles are bounded.
+resolved=$wan_path; depth=0
+while :; do
+ base_of "$resolved"
+ [ "$base" = eth1 ] && break
+ depth=$((depth + 1)); [ "$depth" -le 8 ] || skip 'WAN parent cycle or excessive nesting'
+ dev_sec=$(find_device "$resolved"); one "$dev_sec" || skip 'WAN does not resolve unambiguously to eth1'
+ dtype=$(awk -F '|' -v s="$dev_sec" '$1==s {print $2}' "$work/device-types")
+ case "$dtype" in 8021q|8021ad) ;; *) skip 'WAN custom parent is not an explicit VLAN device';; esac
+ parent=$(ref "$dev_sec" ifname)
+ case "$parent" in ''|*' '*|*':'*|@*) skip 'unsupported WAN parent';; esac
+ resolved=$parent
+done
+lan_path=$(ref "$lan_sec" device); [ -n "$lan_path" ] || skip 'LAN device anchor is missing'
+case "$lan_path" in br-lan|br-lan.*) ;; *) skip 'LAN is not the expected br-lan topology';; esac
+bridge_sec=$(find_device br-lan); one "$bridge_sec" || skip 'missing or duplicate br-lan device'
+# Confirm the expected device is a bridge from the immutable snapshot.
+device_types="$work/device-types"
+bridge_type=$(awk -F '|' -v s="$bridge_sec" '$1==s {print $2}' "$device_types")
+[ "$bridge_type" = bridge ] || skip 'br-lan device is not a bridge'
+ports=$(ref "$bridge_sec" ports); [ -n "$ports" ] || ports=$(ref "$bridge_sec" ifname)
+count=0; p_eth2=0; p_lan2=0; p_lan3=0
+for token in $ports; do
+ count=$((count + 1))
+ case "$token" in eth2) p_eth2=$((p_eth2+1));; lan2) p_lan2=$((p_lan2+1));; lan3) p_lan3=$((p_lan3+1));; *) skip 'non-factory .44 bridge membership';; esac
+done
+[ "$count:$p_eth2:$p_lan2:$p_lan3" = 3:1:1:1 ] || skip 'incomplete or duplicate .44 bridge membership'
+# Reject custom virtual devices shadowing a physical name and duplicate targets.
+while IFS='|' read -r sec typ key kind value; do
+ [ "$typ:$key" = device:name ] || continue
+ case "$value" in *' '*|*':'*) skip 'unsupported device name';; esac
+ base_of "$value"
+ case "$base" in eth1|eth2|lan2|lan3)
+  dtype=$(awk -F '|' -v s="$sec" '$1==s {print $2}' "$device_types")
+  case "$value:$dtype" in
+   *.*:8021q|*.*:8021ad|*:ethernet|*:) ;;
+   *) skip 'custom device collides with physical mapping';;
+  esac;;
+ esac
+done < "$work/refs"
+map_token() {
+ base_of "$1"; mapped=$base
+ case "$base" in eth1) mapped=wan;; eth2) mapped=lan2;; lan2) mapped=lan3;; lan3) mapped=lan4;; esac
+ printf '%s%s' "$mapped" "${1#"$base"}"
+}
+: > "$work/targets"
+while IFS='|' read -r sec typ key kind value; do
+ [ "$typ:$key" = device:name ] || continue
+ target=$(map_token "$value")
+ grep -Fqx "$target" "$work/targets" && skip 'duplicate mapped device names'
+ printf '%s\n' "$target" >> "$work/targets"
+done < "$work/refs"
+# Produce a new UCI file, preserving list/option representation and all other values.
+quote() { printf "'"; printf '%s' "$1" | sed "s/'/'\\\\''/g"; printf "'"; }
+section=0
+package() { :; }
+config() {
+ section=$((section + 1)); section_type=$1; section_name=${2:-}
+ printf '\nconfig '; quote "$1"
+ if [ -n "$section_name" ]; then printf ' '; quote "$section_name"; fi
+ printf '\n'
+}
+emit() {
+ emit_kind=$1; emit_key=$2; emit_value=$3
+ if is_reference "$emit_key"; then
+  new=; for token in $emit_value; do transformed=$(map_token "$token"); new="$new${new:+ }$transformed"; done
+  emit_value=$new
+ fi
+ printf '\t%s ' "$emit_kind"; quote "$emit_key"; printf ' '; quote "$emit_value"; printf '\n'
+}
+option() { emit option "$1" "$2"; }
+list() { emit list "$1" "$2"; }
+. "$work/export" > "$work/network" || fail 'cannot serialize proposal'
+# Validate the complete proposal with UCI in an isolated config/delta directory.
+mkdir "$work/config" "$work/delta" || fail 'cannot create validation context'
+cp "$work/network" "$work/config/network" || fail 'cannot stage proposal'
+"$UCI" -q -c "$work/config" -t "$work/delta" export network > /dev/null || fail 'UCI rejected staged proposal'
+cmp -s "$NETWORK" "$work/original" || skip 'network changed concurrently'
+pending=$("$UCI" -q changes network) || fail 'cannot recheck pending changes'
+[ -z "$pending" ] || skip 'pending UCI changes appeared concurrently'
+# Same directory ensures atomic rename; preserve original owner and mode via cp -p.
+replacement=$(mktemp "$ROOT/etc/config/.xr1710g-network.XXXXXX") || fail 'cannot allocate replacement'
+cp -p "$NETWORK" "$replacement" || fail 'cannot preserve file metadata'
+cat "$work/network" > "$replacement" || fail 'cannot write replacement'
+cmp -s "$NETWORK" "$work/original" || skip 'network changed before installation'
+mv -f "$replacement" "$NETWORK" || fail 'cannot install replacement'
+replacement=
+log 'MIGRATED: verified .44 eth1/eth2/lan2/lan3 to wan/lan2/lan3/lan4; independent of WAN carrier'
+exit 0
