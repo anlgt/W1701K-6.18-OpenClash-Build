@@ -1,0 +1,125 @@
+name: XR1710G Retained Image DIAGNOSTIC ONLY
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [xr1710g-cloud-repair-20261002]
+    paths:
+      - .github/workflows/verify-xr1710g-retained.yml
+      - scripts/xr1710g-diagnostics/**
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: xr1710g-retained-diagnostic-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  diagnostic:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout diagnostic helpers without private configuration
+        id: checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /*
+            !/w1700k-private/
+      - name: Mark every output unvalidated before attempting checks
+        run: |
+          mkdir -p output/diagnostic-record
+          printf '%s\n' \
+            'UNVALIDATED DIAGNOSTIC IMAGE. DO NOT FLASH.' \
+            'Original final kernel.config and compiled PCS source were not retained.' \
+            'Full kernel/profile isolation and complete build provenance remain incomplete.' \
+            'A new full build with complete evidence is required.' \
+            > output/UNVALIDATED-DIAGNOSTIC-READ-ME.txt
+      - name: Install only diagnostic runtime dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends python3 qemu-user squashfs-tools file gzip git
+      - name: Download exact retained image artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          artifact-ids: '11263974621'
+          run-id: '37091448542'
+          repository: ${{ github.repository }}
+          github-token: ${{ github.token }}
+          path: incoming/image
+          merge-multiple: true
+      - name: Download original retained build records
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          artifact-ids: '11264109268'
+          run-id: '37091448542'
+          repository: ${{ github.repository }}
+          github-token: ${{ github.token }}
+          path: incoming/logs
+          merge-multiple: true
+      - name: Recheck retained image without compiling or promoting it
+        id: verify
+        run: python3 scripts/xr1710g-diagnostics/verify-retained.py
+      - name: Prepare 20 MiB DIAGNOSTIC transfer parts even after a check failure
+        id: transfer
+        if: always() && steps.checkout.outcome == 'success'
+        run: |
+          test -f output/UNVALIDATED-DIAGNOSTIC-READ-ME.txt
+          # Generic utility requires output/. Filenames do not imply validation.
+          python3 scripts/xr1710g/prepare-transfer.py
+          test "$(stat -c %s transfer/candidate.tar)" -le 62914560
+          test ! -e transfer/candidate.part03
+          (cd transfer && sha256sum -c TRANSFER-SHA256SUMS)
+      - name: Preserve diagnostic image, reports and source proof
+        if: always() && steps.checkout.outcome == 'success'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: XR1710G-UNVALIDATED-DIAGNOSTIC-RECHECK-${{ github.run_id }}-${{ github.run_attempt }}
+          path: output/
+          retention-days: 7
+          compression-level: 0
+          if-no-files-found: error
+      - name: Upload DIAGNOSTIC transfer part 00
+        if: always() && steps.transfer.outputs.part00 == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: XR1710G-UNVALIDATED-DIAGNOSTIC-${{ github.run_id }}-${{ github.run_attempt }}-part00
+          path: |
+            transfer/candidate.part00
+            transfer/TRANSFER-SHA256SUMS
+            output/UNVALIDATED-DIAGNOSTIC-READ-ME.txt
+          retention-days: 7
+          compression-level: 0
+          if-no-files-found: error
+      - name: Upload DIAGNOSTIC transfer part 01
+        if: always() && steps.transfer.outputs.part01 == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: XR1710G-UNVALIDATED-DIAGNOSTIC-${{ github.run_id }}-${{ github.run_attempt }}-part01
+          path: |
+            transfer/candidate.part01
+            transfer/TRANSFER-SHA256SUMS
+            output/UNVALIDATED-DIAGNOSTIC-READ-ME.txt
+          retention-days: 7
+          compression-level: 0
+          if-no-files-found: error
+      - name: Upload DIAGNOSTIC transfer part 02
+        if: always() && steps.transfer.outputs.part02 == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: XR1710G-UNVALIDATED-DIAGNOSTIC-${{ github.run_id }}-${{ github.run_attempt }}-part02
+          path: |
+            transfer/candidate.part02
+            transfer/TRANSFER-SHA256SUMS
+            output/UNVALIDATED-DIAGNOSTIC-READ-ME.txt
+          retention-days: 7
+          compression-level: 0
+          if-no-files-found: error
+# No build, release, deployment, merge, device access or flashing in this workflow.
