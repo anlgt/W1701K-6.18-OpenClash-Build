@@ -8,12 +8,22 @@ mapfile -t manifests < <(find "$target" -maxdepth 1 -name '*gemtek_xr1710g-ubi.m
 image=${images[0]}; manifest=${manifests[0]}
 python3 scripts/xr1710g/verify-config.py "$manifest" --manifest
 mkdir -p output/firmware output/build-record /tmp/xr1710g-image-check
+kernel_config=$(find openwrt/build_dir/target-aarch64_cortex-a53_musl/linux-airoha_an7581 -path '*/linux-6.18.52/.config' -print -quit)
+test -n "$kernel_config"
+# Retain actual kernel evidence BEFORE any later validation can fail.
+cp "$kernel_config" output/build-record/kernel.config
+mkdir -p output/build-record/pcs-source
+cp "$(dirname "$kernel_config")"/drivers/net/pcs/airoha/pcs-{airoha-common,an7581}.c output/build-record/pcs-source/
+cp "$(dirname "$kernel_config")"/drivers/net/pcs/airoha/pcs-airoha.h output/build-record/pcs-source/
 openwrt/staging_dir/host/bin/fwtool -i output/build-record/sysupgrade-metadata.json "$image"
 python3 scripts/xr1710g/verify-fit.py "$image" /tmp/xr1710g-image-check output/build-record/sysupgrade-metadata.json
 # Data-only extraction: dev/console is not a regular file and is never executed.
 # Keep the default fatal exit status for every non-excluded extraction error.
 unsquashfs -excludes -d /tmp/xr1710g-root /tmp/xr1710g-image-check/rootfs.squashfs dev
 root=/tmp/xr1710g-root
+run_image_binary() {
+  qemu-aarch64 -L "$root" "$@"
+}
 python3 scripts/xr1710g/verify-apps.py "$root"
 XR_CONFIG_GENERATE_SOURCE="$root/bin/config_generate" python3 scripts/xr1710g/verify-network-defaults.py
 cmp "$root/etc/uci-defaults/22_airoha-network-migrate-v4" xr1710g-files/etc/uci-defaults/22_airoha-network-migrate-v4
@@ -32,10 +42,10 @@ XR_TEST_FIRMWARE_ROOT="$root" XR_TEST_UCI_WRAPPER=/tmp/xr1710g-uci-test-wrapper 
   XR_TEST_MIGRATION_SCRIPT="$root/etc/uci-defaults/22_airoha-network-migrate-v4" \
   python3 scripts/xr1710g/test_migration.py
 file "$root/usr/bin/frpc" | grep -q 'ARM aarch64'
-qemu-aarch64 "$root/usr/bin/frpc" --version | grep -Fx '0.70.1'
+run_image_binary "$root/usr/bin/frpc" --version | grep -Fx '0.70.1'
 printf '%s\n' 'serverAddr = "127.0.0.1"' 'serverPort = 7000' > /tmp/frpc-verify.toml
 # verify parses a fixture and exits; it does not connect to the server.
-qemu-aarch64 "$root/usr/bin/frpc" verify -c /tmp/frpc-verify.toml
+run_image_binary "$root/usr/bin/frpc" verify -c /tmp/frpc-verify.toml
 core="$root/etc/openclash/core/clash_meta"
 test -x "$core"
 file "$core" | grep -q 'ARM aarch64'
@@ -59,15 +69,9 @@ cmp "$root/etc/board.d/03_wifi_defaults" openwrt/package/network/config/airoha-a
 cmp "$root/etc/uci-defaults/03_wireless" openwrt/package/network/config/airoha-an7581-mt7996-board/files/etc/uci-defaults/03_wireless
 test "$(grep -c "disabled='0'" "$root/etc/uci-defaults/03_wireless")" = 3
 grep -Fq 'gemtek,xr1710g-ubi' "$root/etc/board.d/05_compat-version"
-kernel_config=$(find openwrt/build_dir/target-aarch64_cortex-a53_musl/linux-airoha_an7581 -path '*/linux-6.18.52/.config' -print -quit)
-test -n "$kernel_config"
 bash openwrt/scripts/check-gemtek-profile-isolation.sh --config openwrt/.config --kernel-config "$kernel_config" --manifest "$manifest"
 cp "$image" "$manifest" output/firmware/
 cp /tmp/xr1710g-image-check/fit-validation.json /tmp/xr1710g-image-check/device.dtb output/build-record/
-cp "$kernel_config" output/build-record/kernel.config
-mkdir -p output/build-record/pcs-source
-cp "$(dirname "$kernel_config")"/drivers/net/pcs/airoha/pcs-{airoha-common,an7581}.c output/build-record/pcs-source/
-cp "$(dirname "$kernel_config")"/drivers/net/pcs/airoha/pcs-airoha.h output/build-record/pcs-source/
 for f in profiles.json feeds.buildinfo version.buildinfo config.buildinfo; do
   test -f "$target/$f" && cp "$target/$f" output/build-record/
 done

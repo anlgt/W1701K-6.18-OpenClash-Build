@@ -54,6 +54,18 @@ class GateTests(unittest.TestCase):
             result = subprocess.run(['make', '-f', str(p)], cwd=td, capture_output=True)
             self.assertNotEqual(result.returncode, 0)
             self.assertFalse((Path(td)/'reached-second').exists())
+    def test_target_runner_uses_image_loader_prefix(self):
+        import re
+        script = (HERE/'package-output.sh').read_text()
+        runner = re.search(r'(?m)^run_image_binary\(\) \{\n.*?^\}', script, re.S).group(0)
+        with tempfile.TemporaryDirectory() as td:
+            tool = Path(td)/'qemu-aarch64'
+            tool.write_text('#!/bin/sh\nprintf "%s\\n" "$@"\n')
+            tool.chmod(0o755)
+            r = subprocess.run(['sh', '-c', 'PATH="'+td+':$PATH"\nroot=/image-root\n'+runner+'\nrun_image_binary "$root/usr/bin/frpc" --version'], capture_output=True, text=True)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertEqual(r.stdout.splitlines(), ['-L', '/image-root', '/image-root/usr/bin/frpc', '--version'])
+        self.assertNotIn('qemu-aarch64 "$root/usr/bin/frpc"', script)
     def test_seed_package_guard(self):
         result = subprocess.run(['python3', str(HERE/'verify-config.py'), str(HERE.parent.parent/'xr1710g-candidate.config')], capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
