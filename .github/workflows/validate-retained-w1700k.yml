@@ -1,0 +1,59 @@
+name: Validate retained W1700K UBI2 Slim Candidate
+on:
+  push:
+    branches: [w1700k-slim-candidate-20261005]
+    paths:
+      - .github/workflows/validate-retained-w1700k.yml
+      - scripts/w1700k-validate-retained.sh
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: w1700k-retained-validation-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  validate:
+    if: github.repository == 'anlgt/W1701K-6.18-OpenClash-Build' && github.ref == 'refs/heads/w1700k-slim-candidate-20261005'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout validation definitions only
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /w1700k-slim/
+            /scripts/w1700k-validate-retained.sh
+            /.github/workflows/validate-retained-w1700k.yml
+      - name: Install official Ubuntu validation dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake git python3 qemu-user squashfs-tools \
+            binutils curl file xz-utils
+      - name: Validate the immutable completed image
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TZ: UTC
+        run: bash scripts/w1700k-validate-retained.sh
+      - name: Upload validated image and complete offline evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: W1700K-Slim-validated-retained-${{ github.run_id }}-${{ github.run_attempt }}
+          path: output/
+          retention-days: 30
+          compression-level: 0
+          if-no-files-found: error
+      - name: Upload validation diagnostics if a gate fails
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: W1700K-retained-validation-FAILED-${{ github.run_id }}-${{ github.run_attempt }}
+          path: output/build-record/
+          retention-days: 14
+          if-no-files-found: warn
+# Validate only. No firmware rebuild, image edits, release, merge, deployment or flash.
