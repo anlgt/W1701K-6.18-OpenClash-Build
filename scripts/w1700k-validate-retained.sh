@@ -97,7 +97,17 @@ for filename, aid, name, digest, size in (
 print('Original run, successful compile, sole failed gate, and immutable artifact identities verified')
 PY
 original_job=$(cat "$record/original-job-id.txt")
-gh api "repos/$repo/actions/jobs/$original_job/logs" > "$record/original-job.log"
+gh api --allow-escape-sequences "repos/$repo/actions/jobs/$original_job/logs" > "$work/original-job-raw.log"
+# Logs contain CLI color controls. Keep raw bytes off the terminal and deliver plain text.
+python3 - "$work/original-job-raw.log" "$record/original-job.log" <<'PYLOG'
+import re, sys
+from pathlib import Path
+text = Path(sys.argv[1]).read_text()
+text = re.sub(r'\x1b\[[0-?]*[ -/]*[@-~]', '', text)
+text = re.sub(r'\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)', '', text)
+assert '\x1b' not in text, 'Unrecognized terminal control in build log'
+Path(sys.argv[2]).write_text(text)
+PYLOG
 gh api -H 'Accept: application/vnd.github.raw+json' \
   "repos/$repo/contents/.github/workflows/build-w1700k-slim.yml?ref=$source_build_commit" \
   > "$record/original-build-w1700k-slim.yml"
@@ -138,8 +148,8 @@ for section in ('source', 'profile', 'feeds', 'plugins', 'mt76'):
 print('Original failure is exclusively the incorrectly expected source revision')
 PY
 
-gh api "repos/$repo/actions/artifacts/$image_artifact/zip" > "$work/original-image.zip"
-gh api "repos/$repo/actions/artifacts/$logs_artifact/zip" > "$record/original-logs.zip"
+gh api --allow-escape-sequences "repos/$repo/actions/artifacts/$image_artifact/zip" > "$work/original-image.zip"
+gh api --allow-escape-sequences "repos/$repo/actions/artifacts/$logs_artifact/zip" > "$record/original-logs.zip"
 printf '%s  %s\n' "$image_zip_sha256" "$work/original-image.zip" "$logs_zip_sha256" "$record/original-logs.zip" | sha256sum -c -
 [[ "$(stat -c %s "$work/original-image.zip")" == 43070297 ]]
 [[ "$(stat -c %s "$record/original-logs.zip")" == 126718 ]]
