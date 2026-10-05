@@ -1,0 +1,3 @@
+# W1700K-Slim uses a custom kernel and immutable source/feed locks.
+# No public snapshot kmod feed has been proven compatible with this kernel ABI.
+# Add only independently verified matching packages; do not use apk upgrade.

@@ -1,0 +1,14 @@
+#!/bin/sh
+. /lib/functions/system.sh
+[ "$(board_name)" = 'gemtek,w1700k-ubi' ] || exit 0
+uci -q set luci.languages.zh_cn='简体中文 (Simplified Chinese)' || exit 1
+uci -q set luci.main.lang='zh_cn' || exit 1
+uci -q set luci.main.mediaurlbase='/luci-static/argon' || exit 1
+uci -q commit luci || exit 1
+uci -q set irqbalance.irqbalance.enabled='1' || exit 1
+uci -q commit irqbalance || exit 1
+[ ! -x /etc/init.d/irqbalance ] || /etc/init.d/irqbalance enable || exit 1
+# No passwords, radio defaults, tunnels, subscriptions, overclock or WAN rules.
+# Keep native first-boot credentials/radio logic and native automatic fan curve.
+# UPnP remains disabled until the owner chooses to enable it.
+exit 0

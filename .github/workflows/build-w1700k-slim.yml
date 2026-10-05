@@ -1,0 +1,184 @@
+name: Build W1700K UBI2 Slim Candidate
+on:
+  workflow_dispatch:
+  push:
+    branches: [w1700k-slim-candidate-20261005]
+    paths:
+      - .github/workflows/build-w1700k-slim.yml
+      - w1700k-slim/**
+permissions:
+  contents: read
+concurrency:
+  group: w1700k-slim-${{ github.ref }}
+  cancel-in-progress: false
+env:
+  SOURCE_URL: https://github.com/OpenWRT-fanboy/OpenW1700k.git
+  SOURCE_COMMIT: 15490b469f68133da3d244881fb48dd5e42c1d87
+  PACKAGES_COMMIT: 349c2ca5c8a058b30d42c537faa4c9e94e997106
+  LUCI_COMMIT: aa3d48836e90ae0706c8d8f9b46b8371e45cfe1f
+  ROUTING_COMMIT: 4b9891b9136259f93294a424507ed24c5e8c1cbd
+  OPENCLASH_COMMIT: c3a33c1d3407956fdf8f0e0b7c1a4c52e6ad9593
+  ARGON_COMMIT: 2a28799ca063aba7edc3314143b93c8325c86df4
+  MIHOMO_URL: https://github.com/MetaCubeX/mihomo/releases/download/v1.19.32/mihomo-linux-arm64-v1.19.32.gz
+  MIHOMO_SHA256: 9dd862e28b46ff7d775f169cceebc28deccaa0a9e804237d421cd2571e0caba0
+  TZ: UTC
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 350
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Install build and validation dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential clang \
+            gcc-multilib g++-multilib binutils bzip2 gawk gettext git libncurses-dev \
+            libssl-dev python3 python3-setuptools python3-yaml python3-pyelftools \
+            rsync unzip wget xsltproc zlib1g-dev file perl sed make flex bison \
+            ccache curl patch quilt swig libelf-dev libzstd-dev zstd \
+            cmake ninja-build pkgconf libtool autoconf automake autopoint \
+            device-tree-compiler u-boot-tools squashfs-tools shellcheck qemu-user nodejs
+      - name: Reclaim unused SDK space on ephemeral runner
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc
+          sudo apt-get clean
+          df -h "$GITHUB_WORKSPACE"
+          available=$(df --output=avail -k "$GITHUB_WORKSPACE" | tail -1)
+          test "$available" -ge 41943040
+      - name: Checkout only this isolated candidate
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /.github/workflows/build-w1700k-slim.yml
+            /w1700k-slim/
+      - name: Validate candidate definitions
+        run: |
+          python3 -m py_compile w1700k-slim/*.py
+          python3 -m unittest discover -s w1700k-slim -p 'test_*.py' -v
+          python3 w1700k-slim/verify_config.py w1700k-slim/w1700k-slim.config
+          sh -n w1700k-slim/files/etc/uci-defaults/99-w1700k-slim
+          bash -n w1700k-slim/package_output.sh
+      - name: Fetch exact W1700K source and guarded changes
+        run: |
+          git init openwrt
+          git -C openwrt remote add origin "$SOURCE_URL"
+          git -C openwrt fetch --depth 1 origin "$SOURCE_COMMIT"
+          git -C openwrt checkout --detach FETCH_HEAD
+          test "$(git -C openwrt rev-parse HEAD)" = "$SOURCE_COMMIT"
+          W1700K_SOURCE_ROOT="$PWD/openwrt" python3 w1700k-slim/translations/validate_localization.py
+          python3 w1700k-slim/prepare_source.py openwrt --apply
+          for app in luci-app-airoha-npu luci-app-w1700k-fancontrol; do
+            cp -a "w1700k-slim/translations/$app/zh_Hans" "openwrt/package/$app/po/"
+          done
+          if [ -f w1700k-slim/translations/source-localization.patch ]; then
+            git -C openwrt apply --check ../w1700k-slim/translations/source-localization.patch
+            git -C openwrt apply ../w1700k-slim/translations/source-localization.patch
+          fi
+          git -C openwrt diff --exit-code -- scripts/patch-kernel.sh \
+            target/linux/generic/kernel-6.18 target/linux/generic/backport-6.18 \
+            target/linux/generic/pending-6.18 target/linux/generic/hack-6.18 \
+            target/linux/airoha/patches-6.18 target/linux/airoha/dts package/kernel/mt76 \
+            package/network/config/wifi-scripts package/base-files/files/etc/shadow
+          mkdir -p output/build-record
+          git -C openwrt diff --binary > output/build-record/source-changes.patch
+      - name: Pin feeds and requested applications
+        working-directory: openwrt
+        run: |
+          printf '%s\n' \
+            "src-git packages https://github.com/openwrt/packages.git^$PACKAGES_COMMIT" \
+            "src-git luci https://github.com/openwrt/luci.git^$LUCI_COMMIT" \
+            "src-git routing https://github.com/openwrt/routing.git^$ROUTING_COMMIT" > feeds.conf
+          ./scripts/feeds update -a
+          test "$(git -C feeds/packages rev-parse HEAD)" = "$PACKAGES_COMMIT"
+          test "$(git -C feeds/luci rev-parse HEAD)" = "$LUCI_COMMIT"
+          test "$(git -C feeds/routing rev-parse HEAD)" = "$ROUTING_COMMIT"
+          ./scripts/feeds install -a
+          clone_pinned() {
+            git init "$3"
+            git -C "$3" remote add origin "$1"
+            git -C "$3" fetch --depth 1 origin "$2"
+            git -C "$3" checkout --detach FETCH_HEAD
+            test "$(git -C "$3" rev-parse HEAD)" = "$2"
+          }
+          for app in luci-theme-argon luci-app-openclash; do
+            for feed in luci packages; do
+              path="package/feeds/$feed/$app"
+              if [ -L "$path" ]; then rm "$path"; fi
+            done
+          done
+          clone_pinned https://github.com/vernesong/OpenClash.git "$OPENCLASH_COMMIT" package/OpenClash
+          clone_pinned https://github.com/jerrykuku/luci-theme-argon.git "$ARGON_COMMIT" package/extra/luci-theme-argon
+          grep -Fqx 'PKG_VERSION:=0.47.156' package/OpenClash/luci-app-openclash/Makefile
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('package/OpenClash/luci-app-openclash/Makefile')
+          text=p.read_text(); marker='include $(INCLUDE_DIR)/package.mk\n'
+          assert text.count(marker)==1
+          p.write_text(text.replace(marker,marker+'\n# Keep verified upstream Mihomo bytes unchanged.\nRSTRIP:=:\n',1))
+          PY
+          curl -fL --retry 5 --retry-all-errors "$MIHOMO_URL" -o /tmp/mihomo.gz
+          echo "$MIHOMO_SHA256  /tmp/mihomo.gz" | sha256sum -c -
+          gzip -t /tmp/mihomo.gz
+          install -d package/OpenClash/luci-app-openclash/root/etc/openclash/core
+          gzip -dc /tmp/mihomo.gz > package/OpenClash/luci-app-openclash/root/etc/openclash/core/clash_meta
+          chmod 0755 package/OpenClash/luci-app-openclash/root/etc/openclash/core/clash_meta
+          file package/OpenClash/luci-app-openclash/root/etc/openclash/core/clash_meta | grep -q 'ARM aarch64'
+      - name: Resolve only W1700K hardware and selected components
+        run: |
+          cp w1700k-slim/w1700k-slim.config openwrt/.config
+          printf '%s\n' 'CONFIG_VERSIONOPT=y' 'CONFIG_VERSION_DIST="W1700K-Slim"' \
+            'CONFIG_VERSION_NUMBER="6.18.55-ubi2"' 'CONFIG_VERSION_CODE="r36860-15490b469f"' >> openwrt/.config
+          install -d openwrt/files
+          cp -a w1700k-slim/files/. openwrt/files/
+          chmod 0755 openwrt/files/etc/uci-defaults/99-w1700k-slim
+          make -C openwrt defconfig
+          python3 w1700k-slim/verify_config.py openwrt/.config
+          cp openwrt/.config output/build-record/resolved.config
+          (cd openwrt && ./scripts/diffconfig.sh) > output/build-record/resolved.diffconfig
+      - name: Strict source download gate
+        working-directory: openwrt
+        run: |
+          make download -j4 V=s 2>&1 | tee download.log || make download -j1 V=s 2>&1 | tee download-retry.log
+          echo 'f410638061a165c12f42ab871d2f3fcd525515359b5faeee80969cff84524df9  dl/linux-6.18.55.tar.xz' | sha256sum -c -
+      - name: Native kernel and wireless patch preflight
+        working-directory: openwrt
+        run: |
+          make -j2 tools/install 2>&1 | tee tools.log
+          make -j1 target/linux/prepare V=s 2>&1 | tee kernel-prepare.log
+          make -j1 package/kernel/mac80211/prepare V=s 2>&1 | tee mac80211-prepare.log
+          make -j1 package/kernel/mt76/prepare V=s 2>&1 | tee mt76-prepare.log
+          if find build_dir -type f -name '*.rej' -print -quit | grep -q .; then
+            echo 'Rejected patch hunks remain'; exit 1
+          fi
+          git diff --exit-code -- scripts/patch-kernel.sh
+      - name: Build W1700K candidate
+        id: compile
+        working-directory: openwrt
+        run: |
+          make -j2 world 2>&1 | tee build.log || make -j1 world V=s 2>&1 | tee build-retry.log
+      - name: Validate actual firmware and rootfs
+        run: bash w1700k-slim/package_output.sh
+      - name: Upload validated software candidate and evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: W1700K-Slim-6.18.55-candidate-${{ github.run_id }}-${{ github.run_attempt }}
+          path: output/
+          retention-days: 30
+          compression-level: 0
+          if-no-files-found: error
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: W1700K-Slim-logs-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            openwrt/*.log
+            openwrt/logs/
+            output/build-record/
+          retention-days: 14
+          if-no-files-found: warn
+# Artifact-only. No release, merge, router connection, deployment or flash.

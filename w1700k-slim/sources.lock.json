@@ -1,0 +1,75 @@
+{
+  "status": "Candidate branch/build authorized; image and hardware validation pending",
+  "checked_utc": "2026-10-05T08:42:00Z",
+  "source": {
+    "url": "https://github.com/OpenWRT-fanboy/OpenW1700k.git",
+    "ref": "ubi2",
+    "commit": "15490b469f68133da3d244881fb48dd5e42c1d87"
+  },
+  "profile": {
+    "target": "airoha/an7581",
+    "device": "gemtek_w1700k-ubi",
+    "board": "gemtek,w1700k-ubi",
+    "compat_version": "2.0",
+    "kernel": "6.18.55",
+    "kernel_sha256": "f410638061a165c12f42ab871d2f3fcd525515359b5faeee80969cff84524df9"
+  },
+  "feeds": [
+    {
+      "name": "packages",
+      "sha": "349c2ca5c8a058b30d42c537faa4c9e94e997106",
+      "date": "2026-10-05T07:04:46Z",
+      "message": "xz: use --enable-small only on SMALL_FLASH targets",
+      "url": "https://github.com/openwrt/packages/commit/349c2ca5c8a058b30d42c537faa4c9e94e997106"
+    },
+    {
+      "name": "luci",
+      "sha": "aa3d48836e90ae0706c8d8f9b46b8371e45cfe1f",
+      "date": "2026-10-01T18:42:34Z",
+      "message": "luci-mod-network: hide incompatible encryption modes for 6 GHz",
+      "url": "https://github.com/openwrt/luci/commit/aa3d48836e90ae0706c8d8f9b46b8371e45cfe1f"
+    },
+    {
+      "name": "routing",
+      "sha": "4b9891b9136259f93294a424507ed24c5e8c1cbd",
+      "date": "2026-08-11T11:30:36Z",
+      "message": "opennds: remove package, moved to openwrt/packages",
+      "url": "https://github.com/openwrt/routing/commit/4b9891b9136259f93294a424507ed24c5e8c1cbd"
+    }
+  ],
+  "plugins": {
+    "openclash": {
+      "version": "0.47.156",
+      "commit": "c3a33c1d3407956fdf8f0e0b7c1a4c52e6ad9593"
+    },
+    "argon": {
+      "tag": "v2.4.7",
+      "commit": "2a28799ca063aba7edc3314143b93c8325c86df4",
+      "source_makefile_version": "2.4.6-r20260731"
+    },
+    "mihomo": {
+      "version": "v1.19.32",
+      "commit": "88dcbf7f1614a67c3b36b848ee3592dfa92ada36",
+      "status": "candidate update, integration not yet tested",
+      "url": "https://github.com/MetaCubeX/mihomo/releases/download/v1.19.32/mihomo-linux-arm64-v1.19.32.gz",
+      "gzip_sha256": "9dd862e28b46ff7d775f169cceebc28deccaa0a9e804237d421cd2571e0caba0"
+    }
+  },
+  "mt76": {
+    "url": "https://github.com/OpenWRT-fanboy/mt76-firmware",
+    "commit": "01367e60db433534ad0aa3d3b6c886de8cb7d44c",
+    "note": "retain native fork and all native patches; do not replace with XR stack"
+  },
+  "reference": {
+    "url": "https://github.com/w1700k/builds/releases/tag/ubi2_2026.10.05_r36860-15490b469f",
+    "build_recipe_commit": "7b2369becbea60d85491ac121ac9db477b07d05f",
+    "sha256": "6b63de6786f8e473a0b0277e3bc8348a5b0cebf7fca75faaf9c1768c813ed6d8",
+    "bytes": 22336319,
+    "packages": 203
+  },
+  "hardware_validated": false,
+  "optional_homebridge": {
+    "included": false,
+    "reason": "Exact plugin/runtime unverified; selected feed Node is host-only. Separate postflash verification required."
+  }
+}
