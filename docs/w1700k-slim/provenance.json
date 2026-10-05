@@ -1,0 +1,76 @@
+{
+  "status": "OFFLINE SOFTWARE/IMAGE GATES PASSED; HARDWARE NOT VALIDATED",
+  "binary_unchanged": true,
+  "binary_build": {
+    "repository": "anlgt/W1701K-6.18-OpenClash-Build",
+    "commit": "2dc471fdc382f693e22c5fb8b8e25c150585ce6d",
+    "run": "https://github.com/anlgt/W1701K-6.18-OpenClash-Build/actions/runs/37296245728",
+    "run_attempt": 1,
+    "compile": "success",
+    "original_failure": "FAIL: Wrong pinned source revision"
+  },
+  "retained_artifact": {
+    "id": 11343750772,
+    "url": "https://github.com/anlgt/W1701K-6.18-OpenClash-Build/actions/runs/37296245728/artifacts/11343750772",
+    "zip_sha256": "92a215b167bc110ff8cc8d4c752fccdd6b9f330ddccf2ec217358719a843125c",
+    "zip_bytes": 43070297,
+    "image_bytes": 43062084,
+    "image_sha256": "437f30508d68e69968e9f6ececb89e9a380bc8be9f64a280c445eab9b4ffdcb2",
+    "manifest_sha256": "192066d7dfb56f8598775dd5a99a58c1a179b664d5998805f9adb1cabd7f819c"
+  },
+  "original_logs_artifact": {
+    "id": 11343521178,
+    "zip_sha256": "a565f551523c4fdbd8ce4ff21a480d4c38ef1a4be3a3056ebdacefa5d6c34727"
+  },
+  "validation_only": {
+    "commit": "f6315b7ee79a17b8d26f0c5cff8c399d3a52e25a",
+    "run": "https://github.com/anlgt/W1701K-6.18-OpenClash-Build/actions/runs/37308431238",
+    "run_attempt": 1,
+    "rebuilt": false,
+    "branding_modified": false,
+    "old_expected_metadata_revision": "r36860-15490b469f",
+    "actual_metadata_revision": "r0-15490b4",
+    "revision_expectation": "r0-15490b4"
+  },
+  "source": {
+    "url": "https://github.com/OpenWRT-fanboy/OpenW1700k.git",
+    "commit": "15490b469f68133da3d244881fb48dd5e42c1d87",
+    "patch_matches_original_build": true,
+    "revision_note": "image-commands.mk uses REVISION from shallow getver.sh, not CONFIG_VERSION_CODE"
+  },
+  "fwtool": {
+    "url": "https://github.com/openwrt/fwtool.git",
+    "commit": "04cd252e4e9394ffacd51f56f1f124abc534f715",
+    "fresh_metadata_extraction": true
+  },
+  "mihomo": {
+    "url": "https://github.com/MetaCubeX/mihomo/releases/download/v1.19.32/mihomo-linux-arm64-v1.19.32.gz",
+    "gzip_sha256": "9dd862e28b46ff7d775f169cceebc28deccaa0a9e804237d421cd2571e0caba0",
+    "core_bytes_match": true,
+    "qemu_version_and_config_test": "PASS"
+  },
+  "node_runtime_smoke": {
+    "url": "https://unofficial-builds.nodejs.org/download/release/v24.21.0/node-v24.21.0-linux-arm64-musl.tar.xz",
+    "archive_sha256": "4008018adb2b06d3050c3ea19dc747b5d533499a0a38686562d5a22002d33f7a",
+    "elf_sha256": "fa2789559dbc3603794a229877c244d1c0d06625c124631611ca4e13eac765be",
+    "bundled_in_image_or_deliverable": false,
+    "actual_rootfs_qemu": "PASS",
+    "scope": "Version and local crypto/TLS context only; no network, Homebridge or plugin test"
+  },
+  "private_config_inspected": false,
+  "hardware_validation": "NOT RUN",
+  "router_access": false,
+  "flash_or_release_recommendation": false,
+  "documentation": {
+    "scope": "Documentation-only finalization; this documentation commit did not build or validate the binary",
+    "basis_commit": "f6315b7ee79a17b8d26f0c5cff8c399d3a52e25a",
+    "firmware_rebuilt": false,
+    "firmware_bytes_modified": false,
+    "release_or_tag_created": false,
+    "private_backup_locations_included": false,
+    "validated_artifact_id": 11345405048,
+    "validated_artifact_zip_sha256": "9bf593eeea9311cd8e7ba62179a2b20de0085377fe64331483f4791de3c2acad",
+    "validated_artifact_zip_bytes": 45107958,
+    "validated_artifact_url": "https://github.com/anlgt/W1701K-6.18-OpenClash-Build/actions/runs/37308431238/artifacts/11345405048"
+  }
+}
