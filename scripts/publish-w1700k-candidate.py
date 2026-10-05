@@ -196,12 +196,58 @@ class GitHub:
             raise GateError("GitHub API did not return JSON") from exc
 
     def download(self, endpoint, destination):
+        # Artifact ZIP requests use the Actions API's documented JSON media type
+        # before following its redirect. Release-asset binary requests instead
+        # require octet-stream. Do not use one Accept header for both APIs.
+        if endpoint == f"{API_ROOT}/actions/artifacts/{ARTIFACT_ID}/zip":
+            media = "application/vnd.github+json"
+            label = "fixed_actions_artifact_zip"
+        elif re.fullmatch(re.escape(API_ROOT) + r"/releases/assets/[1-9][0-9]*", endpoint):
+            media = "application/octet-stream"
+            label = "verified_release_asset"
+        else:
+            raise GateError("Binary download endpoint is outside the fixed release task")
         command = self._command("GET", endpoint)
-        command += ["--allow-escape-sequences", "-H", "Accept: application/octet-stream"]
-        # Binary output is sent directly to a file; no ANSI or firmware bytes reach logs.
+        command += ["--allow-escape-sequences", "-H", "Accept: " + media]
+        # Binary output goes directly to a file. stderr may contain signed URLs,
+        # so retain it only in memory and report allowlisted classifications.
         with Path(destination).open("xb") as f:
-            p = subprocess.run(command, stdout=f, stderr=subprocess.PIPE, check=False)
-        require(p.returncode == 0, "GitHub binary download failed")
+            result = subprocess.run(command, stdout=f, stderr=subprocess.PIPE, check=False)
+        if result.returncode:
+            status = "unknown"
+            match = re.search(rb"HTTP ([1-5][0-9]{2})\b", result.stderr)
+            if match:
+                status = match.group(1).decode("ascii")
+            elif Path(destination).stat().st_size <= 16384:
+                # gh can put a small API error JSON body on stdout; never echo it.
+                try:
+                    problem = json.loads(Path(destination).read_bytes())
+                    candidate = str(problem.get("status", "")) if isinstance(problem, dict) else ""
+                    if re.fullmatch(r"[1-5][0-9]{2}", candidate):
+                        status = candidate
+                except (ValueError, UnicodeError):
+                    pass
+            categories = {"401": "authentication_required", "403": "access_denied",
+                          "404": "not_found_or_access_hidden", "406": "unsupported_media_type",
+                          "410": "artifact_expired", "415": "unsupported_media_type",
+                          "429": "rate_limited"}
+            category = categories.get(status, "remote_server_error" if status.startswith("5") else "unclassified_failure")
+            error = result.stderr.lower()
+            if status == "unknown":
+                if b"unknown flag: --allow-escape-sequences" in error:
+                    category = "cli_option_unsupported"
+                elif b"x509:" in error or b"certificate" in error:
+                    category = "tls_verification_failure"
+                elif b"timeout" in error or b"deadline exceeded" in error:
+                    category = "transport_timeout"
+                elif b"no such host" in error:
+                    category = "dns_failure"
+                elif b"connection reset" in error or b"connection refused" in error:
+                    category = "transport_failure"
+            raise GateError("GitHub binary download failed: " + label +
+                            "; exit=" + str(result.returncode) + "; http_status=" + status +
+                            "; category=" + category + "; bytes_written=" + str(Path(destination).stat().st_size))
+        # No automatic retry, header fallback, credential change or alternate URL.
 
     def all_pages(self, endpoint):
         items = []
