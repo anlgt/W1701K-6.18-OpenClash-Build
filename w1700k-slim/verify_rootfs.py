@@ -36,7 +36,7 @@ assert 'setOverclock' in (root/'www/luci-static/resources/view/airoha_npu/status
 assert not (root/'etc/vermagic.txt').exists(), 'Injected external ABI value'
 feed=(root/'etc/apk/repositories.d/distfeeds.list').read_text()
 assert not [l for l in feed.splitlines() if l.strip() and not l.lstrip().startswith('#')], 'Unverified public snapshot feed'
-for path in ('root/.ssh','etc/config/wireless','usr/libexec/npu-jitter-daemon',
+for path in ('lib/firmware/airoha/en7581_npu_data.bin','lib/firmware/airoha/en7581_npu_rv32.bin','root/.ssh','etc/config/wireless','usr/libexec/npu-jitter-daemon',
              'usr/libexec/rpcd/luci.airoha_flowsense','www/luci-static/resources/view/airoha_flowsense'):
     assert not (root/path).exists(), path
 assert not list((root/'etc/dropbear').glob('dropbear_*_host_key'))

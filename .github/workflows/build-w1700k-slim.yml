@@ -10,7 +10,7 @@ permissions:
   contents: read
 concurrency:
   group: w1700k-slim-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 env:
   SOURCE_URL: https://github.com/OpenWRT-fanboy/OpenW1700k.git
   SOURCE_COMMIT: 15490b469f68133da3d244881fb48dd5e42c1d87

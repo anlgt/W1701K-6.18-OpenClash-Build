@@ -37,6 +37,10 @@ def plan(root):
     # This task builds only sysupgrade firmware, not new bootloader artifacts.
     replace('target/linux/airoha/image/an7581.mk',
         '  ARTIFACTS := chainload-uboot.itb\n  ARTIFACT/chainload-uboot.itb := an7581-chainloader gemtek_w1700k\n', '')
+    # The hidden bootloader package otherwise remains selected by profile default.
+    replace('package/boot/uboot-airoha/Makefile',
+        '  BUILD_DEVICES:=gemtek_w1700k-ubi\n',
+        '  BUILD_DEVICES:=gemtek_w1700k-ubi\n  DEFAULT:=n\n')
     # Never guess hwmon5 when the actual fan controller cannot be identified.
     fan_paths = [
         'package/luci-app-w1700k-fancontrol/root/etc/init.d/fan',

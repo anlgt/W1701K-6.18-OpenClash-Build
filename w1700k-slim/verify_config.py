@@ -20,7 +20,7 @@ luci-app-w1700k-fancontrol kmod-inet-diag kmod-nft-tproxy kmod-tun
 dnsmasq-full ruby-yaml luci-i18n-base-zh-cn luci-i18n-firewall-zh-cn
 luci-i18n-upnp-zh-cn luci-i18n-irqbalance-zh-cn luci-i18n-filemanager-zh-cn
 luci-i18n-airoha-npu-zh-cn luci-i18n-w1700k-fancontrol-zh-cn'''.split())
-FORBIDDEN = set('''fastfetch iperf3 librespeed-go luci-app-netspeedtest
+FORBIDDEN = set('''airoha-en7581-npu-firmware u-boot-an7581_gemtek_w1700k fastfetch iperf3 librespeed-go luci-app-netspeedtest
 luci-app-wol luci-i18n-wol-zh-cn ttyd luci-app-ttyd nano luci-app-attendedsysupgrade attendedsysupgrade-common
 owut luci-app-airoha-flowsense luci-app-mlo luci-app-wifi7
 luci-theme-bootstrap luci-theme-footstrap luci-app-package-manager
@@ -48,6 +48,7 @@ def check_config(content):
     assert values.get('CONFIG_SIGNED_PACKAGES') == 'y'
     packages = {k[len('CONFIG_PACKAGE_'):] for k, v in values.items() if k.startswith('CONFIG_PACKAGE_') and v == 'y'}
     selected = {k[len('CONFIG_PACKAGE_'):] for k, v in values.items() if k.startswith('CONFIG_PACKAGE_') and v in ('y','m')}
+    assert not selected.intersection({'airoha-en7581-npu-firmware','u-boot-an7581_gemtek_w1700k'}), 'Unneeded MT7992 firmware or bootloader target selected'
     assert not any(frp(p) for p in selected), 'FRP may not even be built as an optional module'
     check_packages(packages)
 

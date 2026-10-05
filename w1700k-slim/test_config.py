@@ -10,6 +10,10 @@ class ConfigTests(unittest.TestCase):
         for key in ('CONFIG_IMAGEOPT=y','CONFIG_VERSIONOPT=y'):
             with self.subTest(key=key):
                 with self.assertRaises(AssertionError): check_config(self.seed.replace(key,''))
+    def test_unneeded_npu_and_bootloader_rejected(self):
+        for name in ('airoha-en7581-npu-firmware','u-boot-an7581_gemtek_w1700k'):
+            for mode in ('y','m'):
+                with self.assertRaises(AssertionError): check_config(self.seed+f'\nCONFIG_PACKAGE_{name}={mode}\n')
     def test_wrong_version_rejected(self):
         with self.assertRaises(AssertionError): check_config(self.seed.replace('6.18.55-ubi2','SNAPSHOT'))
     def test_wrong_board_rejected(self):
