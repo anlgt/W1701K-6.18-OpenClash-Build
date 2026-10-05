@@ -26,6 +26,12 @@ from pathlib import Path
 BOARD = 'gemtek,w1700k-ubi'
 PROFILE = 'gemtek_w1700k-ubi'
 KERNEL = '6.18.55'
+SOURCE_COMMIT = '15490b469f68133da3d244881fb48dd5e42c1d87'
+# image-commands.mk uses REVISION from getver.sh, not CONFIG_VERSION_CODE.
+# This exact shallow source checkout produces r0-15490b4. The full source SHA
+# must be verified independently by the build; the short revision is not proof.
+CANDIDATE_REVISION = 'r0-15490b4'
+REFERENCE_REVISION = 'r36860-15490b469f'
 REFERENCE_SHA256 = '6b63de6786f8e473a0b0277e3bc8348a5b0cebf7fca75faaf9c1768c813ed6d8'
 REFERENCE_BYTES = 22336319
 MAX_IMAGE_BYTES = 0x1B700000
@@ -259,7 +265,8 @@ def validate_metadata(metadata, mode):
     expected = ('W1700K-Slim', '6.18.55-ubi2') if mode == 'candidate' else ('OpenWrt', 'ubi2')
     require((version.get('dist'), version.get('version')) == expected,
             'Wrong ' + mode + ' distribution/version')
-    require(version.get('revision') == 'r36860-15490b469f', 'Wrong pinned source revision')
+    revision = CANDIDATE_REVISION if mode == 'candidate' else REFERENCE_REVISION
+    require(version.get('revision') == revision, 'Wrong pinned source revision')
 
 
 def enabled(nodes, path):
@@ -494,6 +501,14 @@ def validate_image(data, metadata, mode='candidate', metadata_source='fwtool'):
     report = {'status': 'PASS', 'mode': mode, 'sha256': digest, 'image_bytes': len(data),
               'fit_bytes': total, 'payloads': results, 'kernel': kernel, 'device_tree': device,
               'metadata': metadata, 'metadata_validation': trailer,
+              'source_provenance_requirement': {
+                  'required_full_source_commit': SOURCE_COMMIT,
+                  'metadata_revision': metadata['version']['revision'],
+                  'required_evidence': 'Build workflow and source preparation must independently '
+                                       'verify git rev-parse HEAD against the full source commit',
+                  'artifact_verification': 'NOT VERIFIED FROM ARTIFACT: the abbreviated metadata '
+                                           'revision does not establish the full source commit',
+              },
               'hardware_validation': 'NOT RUN: offline artifact checks only; do not flash or release',
               'rootfs_content_validation': 'NOT RUN: only binary superblock and payload hashes checked'}
     return report, payloads

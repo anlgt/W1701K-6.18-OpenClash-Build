@@ -136,7 +136,7 @@ def metadata(mode='candidate'):
             'version': {'target': 'airoha/an7581', 'board': gate.PROFILE,
                         'dist': 'W1700K-Slim' if mode == 'candidate' else 'OpenWrt',
                         'version': '6.18.55-ubi2' if mode == 'candidate' else 'ubi2',
-                        'revision': 'r36860-15490b469f'}}
+                        'revision': 'r0-15490b4' if mode == 'candidate' else 'r36860-15490b469f'}}
 
 
 def kernel(version='6.18.55'):
@@ -214,6 +214,31 @@ class ArtifactTests(unittest.TestCase):
         gate.validate_metadata(metadata('reference'), 'reference')
         with self.assertRaisesRegex(gate.ValidationError, 'distribution/version'):
             gate.validate_metadata(metadata(), 'reference')
+
+    def test_candidate_revision_is_one_exact_shallow_checkout_value(self):
+        for revision in ['r36860-15490b469f', 'r0-15490b5', 'r0-15490b469f',
+                         'r1-15490b4', 'r0-15490b4-dirty', '', None]:
+            meta = metadata()
+            meta['version']['revision'] = revision
+            with self.subTest(revision=revision), self.assertRaisesRegex(
+                    gate.ValidationError, 'Wrong pinned source revision'):
+                self.validate(fixture(meta=meta), meta)
+
+    def test_reference_revision_remains_exact(self):
+        for revision in ['r0-15490b4', 'r36860-15490b469e', 'r36860-15490b4', '', None]:
+            meta = metadata('reference')
+            meta['version']['revision'] = revision
+            with self.subTest(revision=revision), self.assertRaisesRegex(
+                    gate.ValidationError, 'Wrong pinned source revision'):
+                gate.validate_metadata(meta, 'reference')
+
+    def test_full_source_commit_requires_external_build_provenance(self):
+        provenance = self.validate(fixture())['source_provenance_requirement']
+        self.assertEqual(provenance['required_full_source_commit'],
+                         '15490b469f68133da3d244881fb48dd5e42c1d87')
+        self.assertEqual(provenance['metadata_revision'], 'r0-15490b4')
+        self.assertIn('git rev-parse HEAD', provenance['required_evidence'])
+        self.assertIn('NOT VERIFIED FROM ARTIFACT', provenance['artifact_verification'])
 
     def test_reference_requires_exact_published_file(self):
         with self.assertRaisesRegex(gate.ValidationError, 'pinned SHA256'):
