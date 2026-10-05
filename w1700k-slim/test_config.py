@@ -6,6 +6,12 @@ HERE=Path(__file__).parent
 class ConfigTests(unittest.TestCase):
     def setUp(self): self.seed=(HERE/'w1700k-slim.config').read_text()
     def test_seed_passes(self): check_config(self.seed)
+    def test_hidden_version_options_rejected(self):
+        for key in ('CONFIG_IMAGEOPT=y','CONFIG_VERSIONOPT=y'):
+            with self.subTest(key=key):
+                with self.assertRaises(AssertionError): check_config(self.seed.replace(key,''))
+    def test_wrong_version_rejected(self):
+        with self.assertRaises(AssertionError): check_config(self.seed.replace('6.18.55-ubi2','SNAPSHOT'))
     def test_wrong_board_rejected(self):
         with self.assertRaises(AssertionError): check_config(self.seed.replace('DEVICE_gemtek_w1700k-ubi','DEVICE_gemtek_xr1710g-ubi'))
     def test_second_board_rejected(self):

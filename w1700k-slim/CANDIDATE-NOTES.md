@@ -15,7 +15,7 @@
 
 不包含任何 FRP 客户端/服务端、FRP LuCI/翻译或配置。etherwake 不附带唤醒 UI。裁剪测速服务、ttyd、fastfetch、nano、自动在线固件升级助手、额外主题、FlowSense、单独 MLO/WiFi7 UI、relayd 和 WireGuard。删除单独 UI 不等于删除 Wi-Fi 7 驱动能力。保留 W1700K 必需的 DSA、Airoha Ethernet/NPU、MT7996、NCT7802、Realtek PHY 与两种适配其硬件修订的 PHY 固件。
 
-Homebridge 不阻塞此构建。当前所选 packages feed 的 Node 是 host-only 构建工具，不是路由器运行时，且未确认用户正在使用的小米插件/Node 来源。暂不固化 Homebridge、配对状态或令牌；刷机前应另行保存私有 Homebridge 备份，再按已验证的 ARM64-musl 运行时与原插件版本恢复。不能直接假定本固件公共源支持 `apk add node node-npm`。
+Homebridge 不阻塞此构建。当前所选 packages feed 的 Node 是 host-only 构建工具，不是路由器运行时，且未确认用户正在使用的小米插件/Node 来源。暂不固化 Homebridge、配对状态或令牌；刷机前应另行保存私有 Homebridge 备份，再按已验证的 ARM64-musl 运行时与原插件版本恢复。FIT 升级会按新镜像长度重建 fit 和 rootfs_data，现有 fit 大小不是固定上限，普通“保留配置”也不能被当作保住 /opt 应用数据的保证。备份完整不等于新固件运行时兼容；恢复仍须单独验证。不能直接假定本固件公共源支持 `apk add node node-npm`。
 
 ## 默认值与更新安全
 

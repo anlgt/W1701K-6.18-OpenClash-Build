@@ -36,6 +36,9 @@ def check_packages(packages):
 
 def check_config(content):
     values = dict(re.findall(r'^(CONFIG_[^=\s]+)=(.*)$', content, re.M))
+    version = {'CONFIG_IMAGEOPT': 'y', 'CONFIG_VERSIONOPT': 'y', 'CONFIG_VERSION_DIST': '"W1700K-Slim"', 'CONFIG_VERSION_NUMBER': '"6.18.55-ubi2"', 'CONFIG_VERSION_CODE': '"r36860-15490b469f"'}
+    for key, expected in version.items():
+        assert values.get(key) == expected, f'Incorrect resolved version option: {key}'
     devices = {k for k, v in values.items() if '_DEVICE_' in k and v == 'y'}
     assert devices == {'CONFIG_TARGET_airoha_an7581_DEVICE_gemtek_w1700k-ubi'}, devices
     assert values.get('CONFIG_TARGET_airoha') == values.get('CONFIG_TARGET_airoha_an7581') == 'y'

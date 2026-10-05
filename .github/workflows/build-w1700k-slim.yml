@@ -130,8 +130,6 @@ jobs:
       - name: Resolve only W1700K hardware and selected components
         run: |
           cp w1700k-slim/w1700k-slim.config openwrt/.config
-          printf '%s\n' 'CONFIG_VERSIONOPT=y' 'CONFIG_VERSION_DIST="W1700K-Slim"' \
-            'CONFIG_VERSION_NUMBER="6.18.55-ubi2"' 'CONFIG_VERSION_CODE="r36860-15490b469f"' >> openwrt/.config
           install -d openwrt/files
           cp -a w1700k-slim/files/. openwrt/files/
           chmod 0755 openwrt/files/etc/uci-defaults/99-w1700k-slim
@@ -181,4 +179,21 @@ jobs:
             output/build-record/
           retention-days: 14
           if-no-files-found: warn
+      - name: Retain completed but unvalidated image for diagnosis
+        if: failure() && steps.compile.outcome == 'success'
+        run: |
+          mkdir -p unvalidated
+          cp openwrt/bin/targets/airoha/an7581/*gemtek_w1700k-ubi-squashfs-sysupgrade.itb unvalidated/
+          cp openwrt/bin/targets/airoha/an7581/*gemtek_w1700k-ubi.manifest unvalidated/
+          printf '%s\n' 'UNVALIDATED DIAGNOSTIC IMAGE. Final checks did not pass. DO NOT FLASH.' > unvalidated/UNVALIDATED.txt
+          (cd unvalidated && sha256sum *.itb *.manifest > DIAGNOSTIC-SHA256SUMS)
+      - name: Upload unvalidated diagnostic image
+        if: failure() && steps.compile.outcome == 'success'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: W1700K-UNVALIDATED-DIAGNOSTIC-${{ github.run_id }}-${{ github.run_attempt }}
+          path: unvalidated/
+          retention-days: 7
+          compression-level: 0
+          if-no-files-found: error
 # Artifact-only. No release, merge, router connection, deployment or flash.
