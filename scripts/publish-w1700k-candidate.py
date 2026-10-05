@@ -424,13 +424,25 @@ def verify_release(release, body, expected_draft=None):
     require(isinstance(release.get("draft"), bool), "Missing release draft flag")
     if expected_draft is not None:
         require(release["draft"] is expected_draft, "Unexpected release publication state")
-    if not release["draft"]:
-        require(release.get("html_url") == f"https://github.com/{REPO}/releases/tag/{TAG}",
-                "Unexpected public release URL")
-        require(bool(release.get("published_at")), "Published release lacks timestamp")
+    prefix = f"https://github.com/{REPO}/releases/tag/"
+    url = release.get("html_url")
+    if release["draft"]:
+        # GitHub assigns a temporary untagged URL to a draft even when tag_name
+        # and the real Git ref already exist. Accept only the exact slug from
+        # this fully verified task-owned release, never another draft's URL.
+        require(isinstance(url, str) and (url == prefix + TAG or
+                re.fullmatch(re.escape(prefix) + r"untagged-[0-9a-f]{20}", url) is not None),
+                "Unexpected draft release URL")
+        return url[len(prefix):]
+    require(url == prefix + TAG, "Unexpected public release URL")
+    require(bool(release.get("published_at")), "Published release lacks timestamp")
+    return TAG
 
 
-def verify_assets(api, release_id, expected, complete=False):
+def verify_assets(api, release, body, expected, complete=False):
+    # Recheck ownership and state rather than accepting an arbitrary draft slug.
+    download_slug = verify_release(release, body)
+    release_id = release["id"]
     assets = api.all_pages(f"{API_ROOT}/releases/{release_id}/assets")
     seen = {}
     for asset in assets:
@@ -440,7 +452,7 @@ def verify_assets(api, release_id, expected, complete=False):
         require(asset.get("state") == "uploaded" and asset.get("size") == wanted["size"] and
                 asset.get("digest") == "sha256:" + wanted["sha256"], "Server asset size/digest mismatch: " + name)
         require(isinstance(asset.get("id"), int) and asset["id"] > 0, "Invalid asset ID")
-        require(asset.get("browser_download_url") == f"https://github.com/{REPO}/releases/download/{TAG}/{name}",
+        require(asset.get("browser_download_url") == f"https://github.com/{REPO}/releases/download/{download_slug}/{name}",
                 "Unexpected asset download URL")
         seen[name] = asset
     if complete:
@@ -461,7 +473,7 @@ def publish(api, assets, body, expected):
     if release:
         require(ref is not None, "An existing release has no verified fixed tag")
         verify_release(release, body)
-        existing = verify_assets(api, release["id"], expected, complete=not release["draft"])
+        existing = verify_assets(api, release, body, expected, complete=not release["draft"])
         ensure_not_latest(api, release["id"])
     else:
         existing = {}
@@ -475,7 +487,7 @@ def publish(api, assets, body, expected):
             "make_latest": "false", "generate_release_notes": False,
         })
         verify_release(release, body, expected_draft=True)
-        existing = verify_assets(api, release["id"], expected)
+        existing = verify_assets(api, release, body, expected)
     release_id = release["id"]
     if release["draft"]:
         for name in sorted(expected):
@@ -485,16 +497,16 @@ def publish(api, assets, body, expected):
             current = api.api("GET", f"{API_ROOT}/releases/{release_id}")
             verify_release(current, body, expected_draft=True)
             verify_tag(api)
-            existing = verify_assets(api, release_id, expected)
+            existing = verify_assets(api, current, body, expected)
             if name in existing:
                 continue
             endpoint = f"https://uploads.github.com/{API_ROOT}/releases/{release_id}/assets?name=" + quote(name, safe="")
             api.api("POST", endpoint, input_file=assets / name)
-            existing = verify_assets(api, release_id, expected)
-        verify_assets(api, release_id, expected, complete=True)
-        verify_tag(api)
+            existing = verify_assets(api, current, body, expected)
         current = api.api("GET", f"{API_ROOT}/releases/{release_id}")
         verify_release(current, body, expected_draft=True)
+        verify_assets(api, current, body, expected, complete=True)
+        verify_tag(api)
         # This is the only publication action, and every asset has already passed.
         api.api("PATCH", f"{API_ROOT}/releases/{release_id}", {
             "draft": False, "prerelease": True, "make_latest": "false",
@@ -503,7 +515,7 @@ def publish(api, assets, body, expected):
     final = api.api("GET", f"{API_ROOT}/releases/{release_id}")
     verify_release(final, body, expected_draft=False)
     verify_tag(api)
-    final_assets = verify_assets(api, release_id, expected, complete=True)
+    final_assets = verify_assets(api, final, body, expected, complete=True)
     latest_id = ensure_not_latest(api, release_id)
     with tempfile.TemporaryDirectory(prefix="w1700k-release-readback-") as temp:
         for name, asset in final_assets.items():
