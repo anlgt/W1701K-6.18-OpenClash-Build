@@ -1,0 +1,64 @@
+name: Publish fixed W1700K 6.18.55 candidate prerelease
+on:
+  push:
+    branches: [w1700k-publish-candidate-20261005]
+    paths:
+      - .github/workflows/publish-w1700k-candidate.yml
+      - scripts/publish-w1700k-candidate.py
+      - release/w1700k-candidate-notes.md
+permissions:
+  contents: write
+  actions: read
+concurrency:
+  group: w1700k-6.18.55-slim-candidate-r1-publication
+  cancel-in-progress: false
+jobs:
+  publish:
+    if: github.repository == 'anlgt/W1701K-6.18-OpenClash-Build' && github.ref == 'refs/heads/w1700k-publish-candidate-20261005' && github.event_name == 'push' && !github.event.deleted
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout only the bounded publisher and public documentation
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /.github/workflows/publish-w1700k-candidate.yml
+            /scripts/publish-w1700k-candidate.py
+            /release/w1700k-candidate-notes.md
+            /docs/w1700k-slim/
+      - name: Checkout exact documentation tag target without historical content
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: 1cdd0d6d9f222ea83e1c500f43ba9c87c96ee90a
+          path: _source
+          persist-credentials: false
+          fetch-depth: 1
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /docs/w1700k-slim/
+      - name: Verify immutable inputs, stage assets, and publish fixed prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_HOST: github.com
+          GH_PROMPT_DISABLED: '1'
+          GH_PAGER: cat
+          TZ: UTC
+        run: python3 scripts/publish-w1700k-candidate.py
+      - name: Retain publication verification only
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: W1700K-candidate-publication-proof-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            output/release-verification.json
+            output/publisher-status.json
+          if-no-files-found: warn
+          retention-days: 30
+# One fixed prerelease only. No rebuild, main merge, router access, flash,
+# private configuration reads, persistent credentials, deletion or overwrite.
