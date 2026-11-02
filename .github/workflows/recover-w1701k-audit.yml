@@ -1,0 +1,58 @@
+name: Recover and audit W1701K compiled candidates
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: w1701k-audit-recovery
+  cancel-in-progress: false
+env:
+  GH_TOKEN: ${{ github.token }}
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Install audit tools on the runner
+        run: |
+          sudo apt-get update -o Acquire::Retries=3
+          sudo apt-get install -y --no-install-recommends qemu-user kmod binutils
+      - name: Recover immutable candidates and build records
+        env:
+          W1701K_WIFI_PASSWORD: ${{ secrets.W1701K_WIFI_PASSWORD }}
+        run: |
+          gh run download 41458182897 -n W1701K-unvalidated-audit-input-5-1 -D .
+          gh run download 41458182897 -n W1701K-6.18.60-failure-5-1 -D recovery-diagnostics
+          mkdir -p openwrt/build_dir/target-recovery/linux-airoha_an7581/linux-6.18.60
+          cp output/build-record/compiled-kernel.config openwrt/build_dir/target-recovery/linux-airoha_an7581/linux-6.18.60/.config
+          mkdir -p openwrt/files/etc
+          umask 077
+          printf '%s\n' "$W1701K_WIFI_PASSWORD" > openwrt/files/etc/w1701k-wifi-key
+      - name: Recheck existing full-image audit and run actual Lite image audit
+        run: |
+          python3 - <<'PY'
+          import hashlib, json
+          from pathlib import Path
+          report = json.loads(Path('output/build-record/full-image-audit.json').read_text())
+          image, = Path('output/firmware').glob('*sysupgrade.bin')
+          assert hashlib.file_digest(image.open('rb'), 'sha256').hexdigest() == report['image_sha256']
+          assert report['rootfs_dependencies'] == 'passed'
+          assert report['supported_devices'] == ['gemtek,w1701k']
+          assert report['mihomo_runtime_version'] == '1.19.33'
+          print('PASS: immutable full BIN matches the successful full audit from build 41458182897')
+          PY
+          image=$(find openwrt/bin/targets/airoha/an7581 -name '*gemtek_w1701k-initramfs-uImage.itb' -print -quit)
+          python3 scripts/audit-w1701k-image.py --flavour lite --image "$image" \
+            --output output/build-record/lite-image-audit.json
+      - name: Preserve recovery evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: W1701K-audit-recovery-${{ github.run_number }}-${{ github.run_attempt }}
+          path: |
+            output/
+            recovery-diagnostics/
+            openwrt/bin/targets/airoha/an7581/*gemtek_w1701k-initramfs-uImage.itb
+          retention-days: 30

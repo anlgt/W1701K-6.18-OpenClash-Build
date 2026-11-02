@@ -86,9 +86,14 @@ def unpack_initrd(data, root):
         if name == 'TRAILER!!!':
             break
         require(not name.startswith('/') and '..' not in Path(name).parts, 'unsafe initrd path')
+        # gen_init_cpio includes the archive root itself. Its parent is outside
+        # the extraction root by definition; it is not a symlink traversal.
+        if name in ('', '.', './'):
+            require(stat.S_ISDIR(mode), 'CPIO root entry is not a directory')
+            continue
         target = root / name
         # No archive parent may point outside the temporary extraction root.
-        require(target.parent.resolve().is_relative_to(root.resolve()), 'initrd parent symlink escape')
+        require(target.parent.resolve().is_relative_to(root.resolve()), f'initrd parent symlink escape: {name!r}')
         target.parent.mkdir(parents=True, exist_ok=True)
         if stat.S_ISDIR(mode):
             target.mkdir(exist_ok=True)
@@ -248,8 +253,16 @@ def check_root(root, full):
     for module in modules[0].rglob('*.ko'):
         magic = run('modinfo', '-F', 'vermagic', module).strip()
         require(magic.split()[0] == modules[0].name, f'kernel vermagic mismatch for {module.name}')
+    packages = {}
+    installed = root / 'lib/apk/db/installed'
+    if installed.is_file():
+        for record in installed.read_text().split('\n\n'):
+            fields = dict(line.split(':', 1) for line in record.splitlines() if ':' in line)
+            if 'P' in fields and 'V' in fields:
+                packages[fields['P']] = fields['V']
     return {'elf_files_checked': elf_count, 'kernel_modules': modules[0].name,
-            'rootfs_dependencies': 'passed', 'mihomo_runtime_version': '1.19.33' if full else 'not included'}
+            'rootfs_dependencies': 'passed', 'package_versions': packages,
+            'mihomo_runtime_version': '1.19.33' if full else 'not included'}
 
 
 def check_kernel(openwrt, output):
