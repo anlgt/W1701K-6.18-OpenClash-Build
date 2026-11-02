@@ -21,6 +21,8 @@ state = json.loads(p.read_text())
 args = [a for a in sys.argv[1:] if a != '-q']
 if args[0] == 'set':
     key, value = args[1].split('=', 1)
+    if key == os.environ.get('UCI_TEST_FAIL_KEY'):
+        sys.exit(37)
     state[key] = value
 elif args[0] == 'get':
     if args[1] not in state: sys.exit(1)
@@ -80,6 +82,10 @@ config_foreach() {
     subprocess.run(['sh', str(shell)], env={**env, 'TEST_BOARD': 'gemtek,w1700k-ubi'}, check=True)
     assert json.loads(state_file.read_text()) == initial
     result = subprocess.run(['sh', str(shell)], env={**env, 'TEST_NO_RADIOS': '1'})
+    assert result.returncode == 1
+    assert 'wireless' not in json.loads(state_file.read_text()).get('_commits', [])
+    state_file.write_text(json.dumps(initial))
+    result = subprocess.run(['sh', str(shell)], env={**env, 'UCI_TEST_FAIL_KEY': 'wireless.radio2.country'})
     assert result.returncode == 1
     assert 'wireless' not in json.loads(state_file.read_text()).get('_commits', [])
 print('PASS: GT/CN/LAN defaults, literal hash characters, 6 GHz disabled, board guard, late PHY retry')

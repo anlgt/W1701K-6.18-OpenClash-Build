@@ -24,3 +24,17 @@ RAM-boot the Lite ITB and run `w1701k-hwcheck`; a successful build alone does no
 verify boot, radio operation, physical port mapping or flash compatibility.
 The full BIN contains OpenClash/Mihomo; the RAM ITB omits the large proxy userland.
 The workflow checks that both images use identical kernel ABI and kernel modules.
+
+Release is additionally gated on auditing the actual sysupgrade tar/SquashFS and
+the RAM ITB's embedded XZ/CPIO root. The reports check W1701K metadata, original
+NAND layout, PCIe x2, RAM size, FIT component hashes, the 16 MiB kernel limit,
+ARM64 ELF architecture/library dependencies, module vermagic, hardware firmware,
+management/network executables, private wireless key permissions and Mihomo's
+version under ARM64 emulation. HTTPS management dependencies are explicitly selected.
+
+On the actual device, run `w1701k-acceptance --image /tmp/sysupgrade.bin` from
+RAM before deciding to flash. It includes `w1701k-hwcheck`, verifies the running
+LAN/GT wireless interfaces, local DHCP/DNS/HTTP/HTTPS/SSH services, and performs
+`sysupgrade -T`. It does not flash or change configuration. Client DHCP leases,
+WAN/PPPoE, wired link speeds and sustained wireless/load tests remain physical
+acceptance steps; CI cannot establish that they work on the user's hardware.

@@ -48,6 +48,18 @@ assert text.count(anchor) == 1
 text = text.replace(anchor, '\tgemtek,w1701k)\n\t\tucidef_set_interfaces_lan_wan "lan" "wan"\n\t\t;;\n' + anchor)
 network.write_text(text, newline='\n')
 
+# This board uses NAND sysupgrade tar, not the UBI/FIT upgrade path of W1700K.
+# Do not ask sysupgrade to copy utilities that its image does not install/use.
+platform = airoha / 'an7581/base-files/lib/upgrade/platform.sh'
+text = platform.read_text()
+anchor = "RAMFS_COPY_BIN='fitblk fit_check_sign'"
+assert text.count(anchor) == 1
+text = text.replace(anchor, anchor + '''
+case "$(board_name)" in
+gemtek,w1701k) RAMFS_COPY_BIN='' ;;
+esac''')
+platform.write_text(text, newline='\n')
+
 caldata = airoha / 'base-files/lib/preinit/90_extract_caldata'
 assert not caldata.exists()
 caldata.write_text(legacy(str(caldata)), newline='\n')

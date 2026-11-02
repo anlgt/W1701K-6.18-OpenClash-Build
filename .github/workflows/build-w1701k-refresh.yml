@@ -34,15 +34,6 @@ jobs:
     timeout-minutes: 350
 
     steps:
-      - name: Checkout build definition
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-
-      - name: Verify first-boot network configuration
-        run: |
-          python3 scripts/check-w1701k-network-defaults.py
-          sh -n w1701k-refresh-files/etc/uci-defaults/99-w1701k-network
-          sh -n w1701k-refresh-files/etc/hotplug.d/ieee80211/99-w1701k-network
-
       - name: Install build dependencies
         env:
           DEBIAN_FRONTEND: noninteractive
@@ -59,7 +50,7 @@ jobs:
             libreadline-dev libssl-dev libtool libyaml-dev lld llvm \
             lrzsz msmtp nano ninja-build p7zip-full patch pkgconf \
             python3 python3-dev python3-docutils python3-pip python3-ply \
-            python3-pyelftools qemu-utils re2c rename rsync scons squashfs-tools \
+            python3-pyelftools qemu-utils qemu-user kmod re2c rename rsync scons squashfs-tools \
             subversion swig texinfo uglifyjs unzip vim wget xmlto xxd zlib1g-dev zstd
 
       - name: Reclaim build space
@@ -72,6 +63,17 @@ jobs:
           remove-docker-images: true
           remove-dotnet: true
           remove-haskell: true
+
+      - name: Checkout build definition
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Verify first-boot network configuration
+        run: |
+          python3 scripts/check-w1701k-network-defaults.py
+          sh -n w1701k-refresh-files/usr/bin/w1701k-acceptance
+          python3 -m py_compile scripts/audit-w1701k-image.py
+          sh -n w1701k-refresh-files/etc/uci-defaults/99-w1701k-network
+          sh -n w1701k-refresh-files/etc/hotplug.d/ieee80211/99-w1701k-network
 
       - name: Fetch the pinned 6.18.60 W1701K source
         run: |
@@ -202,6 +204,7 @@ jobs:
           chmod 0755 \
             openwrt/files/etc/uci-defaults/99-w1701k-custom-defaults \
             openwrt/files/usr/bin/w1701k-hwcheck \
+            openwrt/files/usr/bin/w1701k-acceptance \
             openwrt/files/usr/libexec/w1701k-network-defaults \
             openwrt/files/etc/uci-defaults/99-w1701k-network \
             openwrt/files/etc/hotplug.d/ieee80211/99-w1701k-network
@@ -232,9 +235,11 @@ jobs:
 
       - name: Configure the full OpenClash flash image
         run: |
-          cp w1701k-6.18-refresh-openclash.config openwrt/.config
+          CONFIG_SEED=w1701k-6.18-refresh-openclash.config
+          cp "$CONFIG_SEED" openwrt/.config
           cd openwrt
           make defconfig
+          python3 ../scripts/check-w1701k-config.py .config ../"$CONFIG_SEED"
 
           required_packages='apk-openssl luci luci-app-package-manager luci-i18n-base-zh-cn luci-app-upnp luci-theme-argon luci-app-openclash luci-compat bash curl dnsmasq-full ip-full kmod-inet-diag kmod-nft-tproxy kmod-tun ruby ruby-yaml unzip irqbalance luci-app-irqbalance luci-app-airoha-npu luci-app-airoha-flowsense luci-app-w1700k-fancontrol luci-app-wifi7 luci-app-mlo kmod-airoha-eth kmod-airoha-npu airoha-en7581-mt7996-npu-firmware kmod-dsa-mt7530-mmio kmod-phy-airoha-en8811h airoha-en8811h-firmware kmod-hwmon-nct7802 kmod-mt7996e kmod-mt7996-firmware iw hostapd-utils wpad-openssl pciutils'
           for package_name in $required_packages; do
@@ -302,11 +307,19 @@ jobs:
           grep '^kernel - 6\.18\.60' "$manifest" \
             > ../output/build-record/openclash-kernel-abi.txt
 
+      - name: Audit the full sysupgrade image and runtime dependencies
+        run: |
+          image=$(find output/firmware -name '*sysupgrade.bin' -print -quit)
+          python3 scripts/audit-w1701k-image.py --flavour full --image "$image" \
+            --output output/build-record/full-image-audit.json
+
       - name: Reconfigure the small Lite RAM image
         run: |
-          cp w1701k-6.18-refresh-hybrid-initramfs.config openwrt/.config
+          CONFIG_SEED=w1701k-6.18-refresh-hybrid-initramfs.config
+          cp "$CONFIG_SEED" openwrt/.config
           cd openwrt
           make defconfig
+          python3 ../scripts/check-w1701k-config.py .config ../"$CONFIG_SEED"
 
           required_packages='apk-openssl luci luci-app-package-manager luci-i18n-base-zh-cn luci-app-upnp luci-theme-argon curl dnsmasq ip-full kmod-inet-diag kmod-nft-tproxy kmod-tun irqbalance luci-app-irqbalance luci-app-airoha-npu luci-app-airoha-flowsense luci-app-w1700k-fancontrol luci-app-wifi7 luci-app-mlo kmod-airoha-eth kmod-airoha-npu airoha-en7581-mt7996-npu-firmware kmod-dsa-mt7530-mmio kmod-phy-airoha-en8811h airoha-en8811h-firmware kmod-hwmon-nct7802 kmod-mt7996e kmod-mt7996-firmware iw hostapd-utils wpad-openssl pciutils'
           for package_name in $required_packages; do
@@ -387,6 +400,9 @@ jobs:
             exit 1
           fi
 
+          python3 scripts/audit-w1701k-image.py --flavour lite --image "$initramfs" \
+            --output output/build-record/lite-image-audit.json
+
           cp "$initramfs" output/firmware/
           cp "$manifest" \
             output/firmware/openwrt-airoha-an7581-gemtek_w1701k-initramfs-lite.manifest
@@ -456,8 +472,10 @@ jobs:
             '- Fresh-install defaults: LAN 10.98.0.1/24, SSID GT, CN, 2.4/5 GHz enabled, 6 GHz disabled.' \
             '- WPA2/WPA3 mixed mode; the requested wireless key is injected from an Actions secret.' \
             '- Install without keeping old settings to apply the new network defaults.' \
+            '- Both images passed static FIT, NAND layout, architecture, ELF dependency and kernel-module checks; see the image-audit JSON reports.' \
+            '- Hardware boot and stability have not been tested by CI; run w1701k-acceptance in RAM with the BIN before flashing.' \
             '' \
-            '**RAM-boot the ITB at `0x91000000`, run `w1701k-hwcheck`, and flash the BIN only after every check passes.**' \
+            '**RAM-boot the ITB at `0x91000000`, run `w1701k-acceptance --image /tmp/sysupgrade.bin`, and flash the BIN only after every check passes.**' \
             > release-notes.md
 
           gh release create "$RELEASE_TAG" \
@@ -493,4 +511,5 @@ jobs:
             openwrt/logs/
             resolved-6.18-*.config
             source-patches-applied.diff
+            output/build-record/*audit.json
           retention-days: 14

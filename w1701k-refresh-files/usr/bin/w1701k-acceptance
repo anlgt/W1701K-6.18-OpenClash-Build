@@ -1,0 +1,84 @@
+#!/bin/sh
+# Read-only RAM/fresh-install acceptance. This never flashes the device.
+. /lib/functions.sh
+. /lib/functions/system.sh
+[ "$(board_name)" = 'gemtek,w1701k' ] || { echo 'FAIL: wrong board'; exit 1; }
+fail=0
+bad() { echo "FAIL: $*"; fail=1; }
+
+case "$#:$1" in
+	0:) ;;
+	2:--image) [ -f "$2" ] || { echo 'FAIL: image not found'; exit 1; } ;;
+	*) echo 'Usage: w1701k-acceptance [--image /tmp/sysupgrade.bin]'; exit 1 ;;
+esac
+
+if [ "$(ubus call system board | jsonfilter -e '@.rootfs_type')" = initramfs ]; then
+	/usr/bin/w1701k-hwcheck || fail=1
+fi
+
+echo 'Checking LAN, wireless and local router services (no password output)'
+ip -4 address show dev br-lan | grep -q 'inet 10\.98\.0\.1/24' || bad 'LAN is not 10.98.0.1/24'
+[ "$(uci -q get network.lan.ipaddr)" = '10.98.0.1' ] || bad 'LAN address not persisted'
+[ "$(uci -q get network.lan.netmask)" = '255.255.255.0' ] || bad 'LAN netmask not persisted'
+[ "$(uci -q get dhcp.lan.ignore)" != 1 ] || bad 'LAN DHCP is disabled'
+for service in network dnsmasq uhttpd dropbear; do
+	/etc/init.d/"$service" running >/dev/null 2>&1 || bad "$service is not running"
+done
+nslookup localhost 127.0.0.1 >/dev/null 2>&1 || bad 'local DNS query failed'
+curl -fsS --max-time 10 -o /dev/null http://127.0.0.1/cgi-bin/luci/ || bad 'LuCI HTTP failed'
+curl -kfsS --max-time 10 -o /dev/null https://127.0.0.1/cgi-bin/luci/ || bad 'LuCI local HTTPS failed'
+
+wireless_status=$(ubus call network.wireless status) || bad 'wireless status unavailable'
+config_load wireless
+count_2g=0
+count_5g=0
+check_radio() {
+	local section="$1" band country disabled up interfaces iface
+	config_get band "$section" band
+	config_get country "$section" country
+	config_get disabled "$section" disabled
+	case "$band" in
+		2g|5g)
+			[ "$country" = CN ] || bad "$band country is not CN"
+			[ "$disabled" = 0 ] || bad "$band radio is disabled"
+			up=$(jsonfilter -s "$wireless_status" -e "@.$section.up")
+			[ "$up" = true ] || bad "$band radio is not UP"
+			interfaces=$(jsonfilter -s "$wireless_status" -e "@.$section.interfaces[*].ifname")
+			local found=0
+			for iface in $interfaces; do
+				if iw dev "$iface" info | grep -q '^[[:space:]]*ssid GT$'; then found=1; fi
+			 done
+			[ "$found" = 1 ] || bad "$band has no active GT AP"
+			case "$band" in 2g) count_2g=$((count_2g + 1));; 5g) count_5g=$((count_5g + 1));; esac
+			;;
+		6g) [ "$disabled" = 1 ] || bad '6 GHz is not disabled' ;;
+	esac
+}
+check_ap() {
+	local section="$1" mode device band ssid encryption
+	config_get mode "$section" mode
+	[ "$mode" = ap ] || return 0
+	config_get device "$section" device
+	config_get band "$device" band
+	case "$band" in 2g|5g) ;; *) return 0 ;; esac
+	config_get ssid "$section" ssid
+	config_get encryption "$section" encryption
+	[ "$ssid" = GT ] || bad "$band persisted SSID differs from GT"
+	[ "$encryption" = sae-mixed ] || bad "$band WPA2/WPA3 mode differs from expected"
+}
+config_foreach check_radio wifi-device
+config_foreach check_ap wifi-iface
+[ "$count_2g" -gt 0 ] && [ "$count_5g" -gt 0 ] || bad '2.4/5 GHz radio missing'
+
+if [ -x /etc/openclash/core/clash_meta ]; then
+	/etc/openclash/core/clash_meta -v | grep -q '1.19.33' || bad 'unexpected Mihomo runtime version'
+	ruby -e 'require "yaml"; YAML.load("test: true")' || bad 'Ruby YAML runtime is incomplete'
+fi
+if [ "$#" -eq 2 ]; then
+	sysupgrade -T "$2" || bad 'sysupgrade image compatibility check failed'
+fi
+if [ "$fail" -ne 0 ]; then
+	echo 'FAIL: do not flash; resolve the reported issues first'
+	exit 1
+fi
+echo 'PASS: local acceptance checks passed; WAN, client DHCP, traffic and sustained-load tests still require physical checks'
