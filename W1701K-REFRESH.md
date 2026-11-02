@@ -4,6 +4,15 @@ Use **Build W1701K 6.18.60 GT Hybrid (Lite RAM + OpenClash Flash)** in GitHub Ac
 All firmware compilation and Linux patch preparation run on the Ubuntu Actions runner.
 The original 6.18.44 workflow and releases remain available.
 
+In the current source, Airoha Ethernet/NPU and MT7530/MMIO drivers are built
+into the kernel. Their old vendor kmod package names are no longer selected;
+the configuration and image audits require the corresponding kernel features.
+The old vendor `bridge-flow-offload` userspace package and bridge-family
+flowtable extension are not present in this source. Routed PPE/NPU support is
+retained; no unsupported bridge nftables rules are generated at boot.
+Two unselected feed menus (fwknopd LuCI and squeezelite) are excluded from feed
+installation because their optional Kconfig dependencies currently form cycles.
+
 This build pins the current Airoha source and feeds, OpenClash 0.48.002 and
 Mihomo 1.19.33. The current Airoha tree no longer carries W1701K; the preparation
 script restores its previously tested NAND layout, calibration extraction,

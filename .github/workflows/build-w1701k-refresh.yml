@@ -158,6 +158,7 @@ jobs:
           test "$(git -C feeds/luci rev-parse HEAD)" = "$LUCI_COMMIT"
           test "$(git -C feeds/routing rev-parse HEAD)" = "$ROUTING_COMMIT"
           ./scripts/feeds install -a
+          python3 ../scripts/prepare-w1701k-feeds.py
 
           clone_pinned() {
             repo_url="$1"
@@ -239,9 +240,10 @@ jobs:
           cp "$CONFIG_SEED" openwrt/.config
           cd openwrt
           make defconfig
+          cp .config ../"resolved-$CONFIG_SEED"
           python3 ../scripts/check-w1701k-config.py .config ../"$CONFIG_SEED"
 
-          required_packages='apk-openssl luci luci-app-package-manager luci-i18n-base-zh-cn luci-app-upnp luci-theme-argon luci-app-openclash luci-compat bash curl dnsmasq-full ip-full kmod-inet-diag kmod-nft-tproxy kmod-tun ruby ruby-yaml unzip irqbalance luci-app-irqbalance luci-app-airoha-npu luci-app-airoha-flowsense luci-app-w1700k-fancontrol luci-app-wifi7 luci-app-mlo kmod-airoha-eth kmod-airoha-npu airoha-en7581-mt7996-npu-firmware kmod-dsa-mt7530-mmio kmod-phy-airoha-en8811h airoha-en8811h-firmware kmod-hwmon-nct7802 kmod-mt7996e kmod-mt7996-firmware iw hostapd-utils wpad-openssl pciutils'
+          required_packages='apk-openssl luci luci-app-package-manager luci-i18n-base-zh-cn luci-app-upnp luci-theme-argon luci-app-openclash luci-compat bash curl dnsmasq-full ip-full kmod-inet-diag kmod-nft-tproxy kmod-tun ruby ruby-yaml unzip irqbalance luci-app-irqbalance luci-app-airoha-npu luci-app-airoha-flowsense luci-app-w1700k-fancontrol luci-app-wifi7 luci-app-mlo airoha-en7581-mt7996-npu-firmware kmod-phy-airoha-en8811h airoha-en8811h-firmware kmod-hwmon-nct7802 kmod-mt7996e kmod-mt7996-firmware iw hostapd-utils wpad-openssl pciutils'
           for package_name in $required_packages; do
             grep -Fqx "CONFIG_PACKAGE_${package_name}=y" .config || {
               echo "Required full-image package was not selected: $package_name"
@@ -288,7 +290,7 @@ jobs:
           test -n "$manifest" && test -s "$manifest"
           test -n "$sysupgrade" && test -s "$sysupgrade"
 
-          required_manifest='luci-app-openclash luci-compat bash curl dnsmasq-full kmod-inet-diag kmod-nft-tproxy kmod-tun ruby ruby-yaml unzip luci-app-upnp luci-theme-argon irqbalance luci-app-airoha-npu luci-app-airoha-flowsense luci-app-w1700k-fancontrol luci-app-wifi7 luci-app-mlo kmod-airoha-eth kmod-airoha-npu airoha-en7581-mt7996-npu-firmware kmod-dsa-mt7530-mmio kmod-phy-airoha-en8811h airoha-en8811h-firmware kmod-hwmon-nct7802 kmod-mt7996e kmod-mt7996-firmware wpad-openssl'
+          required_manifest='luci-app-openclash luci-compat bash curl dnsmasq-full kmod-inet-diag kmod-nft-tproxy kmod-tun ruby ruby-yaml unzip luci-app-upnp luci-theme-argon irqbalance luci-app-airoha-npu luci-app-airoha-flowsense luci-app-w1700k-fancontrol luci-app-wifi7 luci-app-mlo airoha-en7581-mt7996-npu-firmware kmod-phy-airoha-en8811h airoha-en8811h-firmware kmod-hwmon-nct7802 kmod-mt7996e kmod-mt7996-firmware wpad-openssl'
           for package_name in $required_manifest; do
             grep -q "^${package_name} - " "$manifest" || {
               echo "Required package missing from full image: $package_name"
@@ -319,9 +321,10 @@ jobs:
           cp "$CONFIG_SEED" openwrt/.config
           cd openwrt
           make defconfig
+          cp .config ../"resolved-$CONFIG_SEED"
           python3 ../scripts/check-w1701k-config.py .config ../"$CONFIG_SEED"
 
-          required_packages='apk-openssl luci luci-app-package-manager luci-i18n-base-zh-cn luci-app-upnp luci-theme-argon curl dnsmasq ip-full kmod-inet-diag kmod-nft-tproxy kmod-tun irqbalance luci-app-irqbalance luci-app-airoha-npu luci-app-airoha-flowsense luci-app-w1700k-fancontrol luci-app-wifi7 luci-app-mlo kmod-airoha-eth kmod-airoha-npu airoha-en7581-mt7996-npu-firmware kmod-dsa-mt7530-mmio kmod-phy-airoha-en8811h airoha-en8811h-firmware kmod-hwmon-nct7802 kmod-mt7996e kmod-mt7996-firmware iw hostapd-utils wpad-openssl pciutils'
+          required_packages='apk-openssl luci luci-app-package-manager luci-i18n-base-zh-cn luci-app-upnp luci-theme-argon curl dnsmasq ip-full kmod-inet-diag kmod-nft-tproxy kmod-tun irqbalance luci-app-irqbalance luci-app-airoha-npu luci-app-airoha-flowsense luci-app-w1700k-fancontrol luci-app-wifi7 luci-app-mlo airoha-en7581-mt7996-npu-firmware kmod-phy-airoha-en8811h airoha-en8811h-firmware kmod-hwmon-nct7802 kmod-mt7996e kmod-mt7996-firmware iw hostapd-utils wpad-openssl pciutils'
           for package_name in $required_packages; do
             grep -Fqx "CONFIG_PACKAGE_${package_name}=y" .config || {
               echo "Required Lite RAM package was not selected: $package_name"
@@ -372,7 +375,7 @@ jobs:
           test -n "$initramfs" && test -s "$initramfs"
           test -n "$sysupgrade" && test -s "$sysupgrade"
 
-          required_manifest='curl dnsmasq kmod-inet-diag kmod-nft-tproxy kmod-tun irqbalance luci-app-airoha-npu luci-app-airoha-flowsense luci-app-w1700k-fancontrol luci-app-wifi7 luci-app-mlo kmod-airoha-eth kmod-airoha-npu airoha-en7581-mt7996-npu-firmware kmod-mt7996e kmod-mt7996-firmware wpad-openssl'
+          required_manifest='curl dnsmasq kmod-inet-diag kmod-nft-tproxy kmod-tun irqbalance luci-app-airoha-npu luci-app-airoha-flowsense luci-app-w1700k-fancontrol luci-app-wifi7 luci-app-mlo airoha-en7581-mt7996-npu-firmware kmod-mt7996e kmod-mt7996-firmware wpad-openssl'
           for package_name in $required_manifest; do
             grep -q "^${package_name} - " "$manifest" || {
               echo "Required package missing from Lite RAM image: $package_name"
