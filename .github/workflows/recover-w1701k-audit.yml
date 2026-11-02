@@ -2,7 +2,7 @@ name: Recover and audit W1701K compiled candidates
 on:
   workflow_dispatch:
 permissions:
-  contents: read
+  contents: write
   actions: read
 concurrency:
   group: w1701k-audit-recovery
@@ -46,6 +46,31 @@ jobs:
           image=$(find openwrt/bin/targets/airoha/an7581 -name '*gemtek_w1701k-initramfs-uImage.itb' -print -quit)
           python3 scripts/audit-w1701k-image.py --flavour lite --image "$image" \
             --output output/build-record/lite-image-audit.json
+      - name: Verify package inventories and prepare release evidence
+        run: python3 scripts/package-w1701k-recovery.py
+      - name: Publish audited recovery firmware
+        run: |
+          tag="w1701k-6.18.60-gt-recovery-r${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}"
+          cat > release-notes.md <<'EOF'
+          W1701K Linux 6.18.60 with OpenClash 0.48.002 and Mihomo 1.19.33.
+
+          Defaults: LAN 10.98.0.1/24, SSID GT, CN, 2.4/5 GHz enabled, 6 GHz disabled. WPA2/WPA3 mixed; the requested key is embedded from an Actions secret. Install without preserving old configuration to apply the defaults.
+
+          BIN is the full OpenClash flash image. ITB is the Lite RAM image without OpenClash/Mihomo/Ruby/Bash. Both binaries were compiled in run 41458182897 and audited using the corrected CPIO root-directory parser; recovery-provenance.json records the compilation and audit revisions. ELF dependencies, firmware files, FIT hashes, W1701K partition layout and matching kernel/module versions passed the release gates.
+
+          Physical boot and wireless stability have not been tested by CI. RAM-boot the ITB at 0x91000000 and run w1701k-acceptance --image /tmp/sysupgrade.bin before deciding to flash. This includes sysupgrade -T. Do not use on W1700K or XR1710G. Client DHCP, WAN and sustained-load tests require actual hardware.
+          EOF
+          gh release create "$tag" --title 'W1701K 6.18.60 GT Hybrid — audited recovery' \
+            --target "$GITHUB_SHA" --notes-file release-notes.md --draft
+          find output/firmware output/build-record -type f -print0 \
+            | xargs -0 -n 50 gh release upload "$tag" --clobber
+          gh release upload "$tag" output/RELEASE-SHA256SUMS --clobber
+          find output/firmware output/build-record -type f -printf '%f\n' > expected-assets.txt
+          echo RELEASE-SHA256SUMS >> expected-assets.txt
+          LC_ALL=C sort -o expected-assets.txt expected-assets.txt
+          gh release view "$tag" --json assets --jq '.assets[].name' | LC_ALL=C sort > uploaded-assets.txt
+          diff -u expected-assets.txt uploaded-assets.txt
+          gh release edit "$tag" --draft=false --prerelease
       - name: Preserve recovery evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
