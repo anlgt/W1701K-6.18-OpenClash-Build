@@ -16,7 +16,13 @@ from pathlib import Path
 
 
 def run(*args):
-    return subprocess.check_output([str(a) for a in args], text=True, stderr=subprocess.STDOUT)
+    result = subprocess.run([str(a) for a in args], text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    if result.returncode:
+        # Keep extractor/runtime diagnostics visible rather than only a Python
+        # traceback. Commands here never print the wireless key.
+        print(result.stdout[-12000:], flush=True)
+        result.check_returncode()
+    return result.stdout
 
 
 def require(condition, message):

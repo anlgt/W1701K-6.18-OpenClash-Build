@@ -304,6 +304,8 @@ jobs:
 
           mkdir -p ../output/firmware ../output/build-record
           cp "$sysupgrade" ../output/firmware/
+          find build_dir -path "*/linux-airoha_an7581/linux-6.18.60/.config" \
+            -exec cp {} ../output/build-record/compiled-kernel.config \;
           cp "$manifest" \
             ../output/firmware/openwrt-airoha-an7581-gemtek_w1701k-sysupgrade-openclash.manifest
           grep '^kernel - 6\.18\.60' "$manifest" \
@@ -312,7 +314,9 @@ jobs:
       - name: Audit the full sysupgrade image and runtime dependencies
         run: |
           image=$(find output/firmware -name '*sysupgrade.bin' -print -quit)
-          python3 scripts/audit-w1701k-image.py --flavour full --image "$image" \
+          # SquashFS contains /dev nodes and privileged xattrs. Use the runner's
+          # root permissions for faithful extraction, without ignoring errors.
+          sudo -n python3 scripts/audit-w1701k-image.py --flavour full --image "$image" \
             --output output/build-record/full-image-audit.json
 
       - name: Reconfigure the small Lite RAM image
@@ -515,4 +519,15 @@ jobs:
             resolved-6.18-*.config
             source-patches-applied.diff
             output/build-record/*audit.json
+          retention-days: 14
+
+      - name: Retain unvalidated candidate images for cloud audit recovery
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: W1701K-unvalidated-audit-input-${{ github.run_number }}-${{ github.run_attempt }}
+          path: |
+            output/firmware/
+            output/build-record/
+            openwrt/bin/targets/airoha/an7581/*gemtek_w1701k-initramfs-uImage.itb
           retention-days: 14
