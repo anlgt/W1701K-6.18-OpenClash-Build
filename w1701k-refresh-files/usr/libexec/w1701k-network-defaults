@@ -1,0 +1,70 @@
+#!/bin/sh
+
+# Run once on a fresh W1701K installation, after radio detection.
+. /lib/functions.sh
+. /lib/functions/system.sh
+[ "$(board_name)" = 'gemtek,w1701k' ] || exit 0
+
+key_file=/etc/w1701k-wifi-key
+[ -r "$key_file" ] || exit 1
+IFS= read -r wifi_key < "$key_file"
+[ "${#wifi_key}" -ge 8 ] && [ "${#wifi_key}" -le 63 ] || exit 1
+
+/sbin/wifi config || exit 1
+config_load wireless
+radio_count=0
+ap_count=0
+
+configure_radio() {
+	local section="$1" band
+	config_get band "$section" band
+	uci set "wireless.$section.country=CN" || return 1
+	case "$band" in
+		2g)
+			uci set "wireless.$section.channel=6"
+			uci set "wireless.$section.htmode=EHT20"
+			;;
+		5g)
+			uci set "wireless.$section.channel=36"
+			uci set "wireless.$section.htmode=EHT80"
+			;;
+		*)
+			# Keep 6 GHz disabled in the CN regulatory domain.
+			uci set "wireless.$section.disabled=1"
+			return
+			;;
+	esac
+	uci set "wireless.$section.disabled=0" || return 1
+	radio_count=$((radio_count + 1))
+}
+
+configure_ap() {
+	local section="$1" mode device band
+	config_get mode "$section" mode
+	[ "$mode" = ap ] || return 0
+	config_get device "$section" device
+	config_get band "$device" band
+	case "$band" in
+		2g|5g) ;;
+		*) uci set "wireless.$section.disabled=1"; return ;;
+	esac
+	uci set "wireless.$section.ssid=GT" || return 1
+	uci set "wireless.$section.encryption=sae-mixed" || return 1
+	uci set "wireless.$section.key=$wifi_key" || return 1
+	uci set "wireless.$section.network=lan" || return 1
+	uci set "wireless.$section.hidden=0" || return 1
+	uci set "wireless.$section.disabled=0" || return 1
+	ap_count=$((ap_count + 1))
+}
+
+uci set network.lan.proto=static || exit 1
+uci set network.lan.ipaddr=10.98.0.1 || exit 1
+uci set network.lan.netmask=255.255.255.0 || exit 1
+uci commit network || exit 1
+
+config_foreach configure_radio wifi-device
+config_foreach configure_ap wifi-iface
+# Keep the first-boot marker if detection has not produced both usable bands.
+[ "$radio_count" -ge 2 ] && [ "$ap_count" -ge 2 ] || exit 1
+uci commit wireless || exit 1
+exit 0

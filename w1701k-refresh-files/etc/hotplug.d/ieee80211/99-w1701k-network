@@ -1,0 +1,10 @@
+#!/bin/sh
+# A late-loaded PHY must still receive the first-boot defaults. Once applied,
+# never overwrite the administrator's subsequent wireless configuration.
+[ "$ACTION" = add ] || exit 0
+marker=/etc/uci-defaults/99-w1701k-network
+[ -f "$marker" ] || exit 0
+if /usr/libexec/w1701k-network-defaults; then
+	rm -f "$marker"
+	/sbin/wifi reload
+fi
