@@ -96,6 +96,5 @@ assert match and match.group().count('+kmod-libphy') == 1
 block = match.group().replace('+kmod-libphy', '+kmod-libphy +kmod-hwmon-core')
 modules.write_text(text[:match.start()] + block + text[match.end():], newline='\n')
 subprocess.run(['git', 'add', '-N', str(dts), str(caldata)], check=True)
-subprocess.run(['git', 'add', '-N', str(mt76_patches / fem_patch.name)], check=True)
 subprocess.run(['git', 'diff', '--check'], check=True)
 print('Restored W1701K: original NAND layout, PCIe x2, LAN/WAN and calibration')
