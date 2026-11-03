@@ -205,7 +205,7 @@ def check_root(root, full):
                   'usr/sbin/uhttpd', 'usr/sbin/dnsmasq', 'sbin/fw4', 'usr/sbin/pppd',
                   'usr/sbin/odhcpd', 'usr/sbin/hostapd', 'usr/sbin/wpa_supplicant',
                   'usr/sbin/iw', 'usr/bin/curl', 'usr/bin/lspci', 'usr/bin/w1701k-acceptance',
-                  'usr/libexec/w1701k-network-defaults', 'lib/upgrade/platform.sh',
+                  'usr/libexec/w1701k-network-defaults', 'usr/bin/w1701k-calibration-check', 'lib/upgrade/platform.sh',
                   'lib/firmware/airoha/EthMD32.dm.bin', 'lib/firmware/airoha/EthMD32.DSP.bin',
                   'lib/firmware/airoha/en7581_MT7996_npu_data.bin',
                   'lib/firmware/airoha/en7581_MT7996_npu_rv32.bin')
@@ -222,6 +222,13 @@ def check_root(root, full):
     script = 'usr/libexec/w1701k-network-defaults'
     require((root / script).read_bytes() == (Path('w1701k-refresh-files') / script).read_bytes(),
             'tested network defaults script missing from image')
+    for script in ('usr/bin/w1701k-acceptance', 'usr/bin/w1701k-calibration-check'):
+        require((root / script).read_bytes() == (Path('w1701k-refresh-files') / script).read_bytes(),
+                f'tested acceptance script missing from image: {script}')
+    drivers = list((root / 'lib/modules').rglob('mt7996e.ko'))
+    require(len(drivers) == 1, 'cannot identify compiled mt7996e module')
+    require(b'W1701K: use ADIE1 for mixed FEM detection' in drivers[0].read_bytes(),
+            'compiled driver does not contain the W1701K FEM fix')
     elf_count = 0
     for path in root.rglob('*'):
         if not path.is_file() or path.is_symlink():
@@ -295,6 +302,12 @@ def main():
     report = {'flavour': args.flavour, 'image_sha256': hashlib.file_digest(args.image.open('rb'), 'sha256').hexdigest(),
               'hardware_boot_test': 'not performed; RAM acceptance is required'}
     report.update(check_kernel(openwrt, args.output))
+    driver_sources = list((openwrt / 'build_dir').glob('target-*/linux-airoha_an7581/mt76-*/mt7996/init.c'))
+    require(len(driver_sources) == 1, 'cannot identify actual prepared mt76 source')
+    driver_root = driver_sources[0].parent.parent
+    run('python3', 'scripts/check-w1701k-mt76.py', driver_root)
+    report['mt76_fem_regression'] = 'passed on actual prepared source'
+    report['w1701k_fem_fix'] = 'ADIE1 on W1701K only; compiled module marker verified during rootfs audit'
     with tempfile.TemporaryDirectory(dir='.') as directory:
         tmp = Path(directory).resolve()
         if full:

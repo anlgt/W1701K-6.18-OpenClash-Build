@@ -1,0 +1,32 @@
+#!/bin/sh
+# Read only: verify the live EEPROM, not merely an extracted firmware file.
+[ "$(cat /tmp/sysinfo/board_name)" = gemtek,w1701k ] || { echo 'FAIL: wrong board'; exit 1; }
+factory=$(awk -F: '/"factory"$/ { print "/dev/" $1 }' /proc/mtd)
+[ -c "$factory" ] || { echo 'FAIL: factory MTD unavailable'; exit 1; }
+failed=0
+found=0
+for eeprom in /sys/kernel/debug/ieee80211/phy*/mt76/eeprom; do
+	[ -r "$eeprom" ] || continue
+	found=$((found + 1))
+	[ "$(wc -c < "$eeprom")" -eq 7680 ] || { echo 'FAIL: live EEPROM size'; failed=1; continue; }
+	set -- $(dd if="$factory" bs=1 skip=16790 count=2 2>/dev/null | hexdump -v -e '1/1 "%u "')
+	[ "$#" -eq 2 ] || { echo 'FAIL: factory FEM unreadable'; failed=1; continue; }
+	factory_fem="$(($1 & 3)):$(($2 & 3))"
+	set -- $(dd if="$eeprom" bs=1 skip=406 count=2 2>/dev/null | hexdump -v -e '1/1 "%u "')
+	[ "$#" -eq 2 ] || { echo 'FAIL: live FEM unreadable'; failed=1; continue; }
+	live_fem="$(($1 & 3)):$(($2 & 3))"
+	[ "$factory_fem" = 0:3 ] || { echo 'FAIL: unexpected factory FEM; review this hardware variant'; failed=1; }
+	[ "$live_fem" = "$factory_fem" ] || { echo "FAIL: live FEM $live_fem differs from factory $factory_fem"; failed=1; }
+done
+[ "$found" -eq 1 ] || { echo 'FAIL: expected one MT7996 live EEPROM'; failed=1; }
+boot_log=$(dmesg) || { echo 'FAIL: kernel log unavailable'; exit 1; }
+if printf '%s\n' "$boot_log" | grep -q 'eeprom load fail, use default bin'; then
+	echo 'FAIL: driver rejected calibration and loaded a default EEPROM'
+	failed=1
+fi
+printf '%s\n' "$boot_log" | grep -q 'W1701K: use ADIE1 for mixed FEM detection' || {
+	echo 'FAIL: W1701K FEM driver fix not observed in this boot'; failed=1;
+}
+[ "$failed" -eq 0 ] || exit 1
+echo 'PASS: live mixed FEM matches factory; ADIE1 fix active; no EEPROM fallback'
+echo 'NOTE: firmware may merge chip efuse calibration bytes; whole-file hashes need not match'

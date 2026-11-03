@@ -1,0 +1,39 @@
+From: anlgt <77385742+anlgt@users.noreply.github.com>
+Subject: [PATCH] wifi: mt76: mt7996: detect W1701K mixed FEM using ADIE1
+
+W1701K factory EEPROM encodes iFEM for band0 and eFEM for band1/2.
+The ADIE IDs on hardware are 79758a02 / 79778a10 / 79778a10 with
+MT_PAD_GPIO=00008400. Reading ADIE0 incorrectly selects all-iFEM,
+rejecting the factory EEPROM and loading mt7996_eeprom_2i5i6i.bin.
+
+Select ADIE1 only for the W1701K and MT7996 chip, retaining the existing
+EEPROM validity checks and all other devices' detection paths. A global
+ADIE1 change would regress all-iFEM boards such as Zyxel WE4600-01.
+
+References:
+ https://lists.infradead.org/pipermail/linux-arm-kernel/2025-December/1089883.html
+ https://lkml.rescloud.iu.edu/hypermail/linux/kernel/2511.1/01728.html
+
+--- a/mt7996/init.c
++++ b/mt7996/init.c
+@@ -1253,10 +1253,20 @@
+ 	if (is_mt7992(&dev->mt76)) {
+ 		adie_idx = (val & MT_PAD_GPIO_ADIE_SINGLE) ? 0 : 1;
+ 		adie_comb = u32_get_bits(val, MT_PAD_GPIO_ADIE_COMB_7992);
+ 	} else {
+ 		adie_idx = 0;
++		/* W1701K has iFEM on band0 and eFEM on band1/band2.
++		 * Band0 alone looks like an all-iFEM board; inspect band1.
++		 * Keep other boards on their existing detection path.
++		 */
++		if (is_mt7996(&dev->mt76) &&
++		    of_machine_is_compatible("gemtek,w1701k")) {
++			adie_idx = 1;
++			dev_info(dev->mt76.dev,
++				 "W1701K: use ADIE1 for mixed FEM detection\n");
++		}
+ 		adie_comb = u32_get_bits(val, MT_PAD_GPIO_ADIE_COMB);
+ 	}
+ 
+ 	ret = mt7996_mcu_rf_regval(dev, MT_ADIE_CHIP_ID(adie_idx), &regval, false);
+ 	if (ret)

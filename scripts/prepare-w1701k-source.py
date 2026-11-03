@@ -63,6 +63,13 @@ platform.write_text(text, newline='\n')
 caldata = airoha / 'base-files/lib/preinit/90_extract_caldata'
 assert not caldata.exists()
 caldata.write_text(legacy(str(caldata)), newline='\n')
+
+# Keep the board fix with the mt76 package so it is applied to both images.
+mt76_patches = Path('package/kernel/mt76/patches')
+fem_patch = Path(__file__).resolve().parents[1] / 'patches/mt76/120-w1701k-mixed-fem.patch'
+assert not (mt76_patches / fem_patch.name).exists()
+(mt76_patches / fem_patch.name).write_bytes(fem_patch.read_bytes())
 subprocess.run(['git', 'add', '-N', str(dts), str(caldata)], check=True)
+subprocess.run(['git', 'add', '-N', str(mt76_patches / fem_patch.name)], check=True)
 subprocess.run(['git', 'diff', '--check'], check=True)
 print('Restored W1701K: original NAND layout, PCIe x2, LAN/WAN and calibration')

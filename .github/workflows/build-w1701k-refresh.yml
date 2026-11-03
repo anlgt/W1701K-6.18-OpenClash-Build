@@ -2,6 +2,10 @@ name: Build W1701K 6.18.60 GT Hybrid (Lite RAM + OpenClash Flash)
 
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'patches/mt76/**'
 
 permissions:
   contents: write
@@ -24,7 +28,7 @@ env:
   MIHOMO_TAG: v1.19.33
   MIHOMO_URL: https://github.com/MetaCubeX/mihomo/releases/download/v1.19.33/mihomo-linux-arm64-v1.19.33.gz
   MIHOMO_SHA256: ba408b317080ee265c46cb923a50018c1b82cbd708551cdd46a1e3e307396187
-  RELEASE_TAG: w1701k-6.18.60-gt-r${{ github.run_number }}-${{ github.run_attempt }}
+  RELEASE_TAG: w1701k-6.18.60-gt-femfix-r${{ github.run_number }}-${{ github.run_attempt }}
   GH_TOKEN: ${{ github.token }}
   TZ: Asia/Shanghai
 
@@ -71,6 +75,7 @@ jobs:
         run: |
           python3 scripts/check-w1701k-network-defaults.py
           sh -n w1701k-refresh-files/usr/bin/w1701k-acceptance
+          sh -n w1701k-refresh-files/usr/bin/w1701k-calibration-check
           python3 -m py_compile scripts/audit-w1701k-image.py
           sh -n w1701k-refresh-files/etc/uci-defaults/99-w1701k-network
           sh -n w1701k-refresh-files/etc/hotplug.d/ieee80211/99-w1701k-network
@@ -144,6 +149,20 @@ jobs:
           node --check package/luci-app-w1700k-fancontrol/htdocs/luci-static/resources/view/fan/status.js
           node --check package/luci-app-airoha-flowsense/htdocs/luci-static/resources/view/airoha_flowsense/status.js
           git diff HEAD --binary > ../source-patches-applied.diff
+
+      - name: Reproduce and verify W1701K FEM detection on pinned driver C functions
+        run: |
+          mt76_revision=0936617dc529ff9da0385221d3fa6de732231177
+          grep -Fqx "PKG_SOURCE_VERSION:=$mt76_revision" openwrt/package/kernel/mt76/Makefile
+          mkdir -p mt76-fem-test/mt7996
+          for source_name in init.c eeprom.c eeprom.h; do
+            curl -fLsS --retry 5 "https://raw.githubusercontent.com/openwrt/mt76/$mt76_revision/mt7996/$source_name" \
+              -o "mt76-fem-test/mt7996/$source_name"
+          done
+          ulimit -c 0
+          python3 scripts/check-w1701k-mt76.py mt76-fem-test --expect-broken
+          patch -d mt76-fem-test -p1 < patches/mt76/120-w1701k-mixed-fem.patch
+          python3 scripts/check-w1701k-mt76.py mt76-fem-test
 
       - name: Pin feeds and third-party LuCI packages
         working-directory: openwrt
@@ -468,13 +487,15 @@ jobs:
       - name: Publish Lite RAM ITB and full OpenClash sysupgrade
         run: |
           printf '%s\n' \
-            '## W1701K 6.18.60 hybrid build' \
+            '## W1701K 6.18.60 W1701K mixed-FEM fix' \
             '' \
             '- `initramfs-uImage.itb` is the small Lite RAM-test image without OpenClash, Mihomo, Ruby or Bash.' \
             '- `squashfs-sysupgrade.bin` is the full flash image with OpenClash, its ARM64 Mihomo core and proxy dependencies.' \
             '- Both images are produced from the same pinned source and have an exactly matching kernel ABI and kernel-module selection.' \
             '- Chinese LuCI, Argon, UPnP, irqbalance, SoC Status, FlowSense, Fan Control, Wi-Fi 7 and MLO remain in both images.' \
             '- This release intentionally publishes no APK files and no `packages.adb` repository.' \
+            '- W1701K-only mt76 fix: inspect ADIE1 to identify the mixed iFEM/eFEM board and retain factory calibration.' \
+            '- w1701k-calibration-check now checks the live FEM fields and fails on EEPROM fallback; calibration data are never embedded from another unit.' \
             '- Fan control is installed but disabled until its W1701K curve is validated.' \
             '- Fresh-install defaults: LAN 10.98.0.1/24, SSID GT, CN, 2.4/5 GHz enabled, 6 GHz disabled.' \
             '- WPA2/WPA3 mixed mode; the requested wireless key is injected from an Actions secret.' \
@@ -486,7 +507,7 @@ jobs:
             > release-notes.md
 
           gh release create "$RELEASE_TAG" \
-            --title "W1701K 6.18.60 GT Hybrid (Lite RAM + OpenClash Flash)" \
+            --title "W1701K 6.18.60 GT mixed-FEM fix (RAM + OpenClash)" \
             --notes-file release-notes.md \
             --target "$GITHUB_SHA" \
             --draft

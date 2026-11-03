@@ -47,3 +47,36 @@ LAN/GT wireless interfaces, local DHCP/DNS/HTTP/HTTPS/SSH services, and performs
 `sysupgrade -T`. It does not flash or change configuration. Client DHCP leases,
 WAN/PPPoE, wired link speeds and sustained wireless/load tests remain physical
 acceptance steps; CI cannot establish that they work on the user's hardware.
+
+
+## 6.18.60 mixed-FEM correction (2026-11-03)
+
+The recovery r2-1 image boots but the tested W1701K rejects its factory
+EEPROM. On hardware, ADIE0/1/2 are `79758a02 / 79778a10 / 79778a10`,
+`MT_PAD_GPIO=00008400`, and the factory FEM fields at EEPROM 0x196/0x197
+are `0 / 3`. mt76 0936617d reads ADIE0, classifies the board as all-iFEM,
+and replaces the factory data with the all-iFEM default. The live FEM fields
+become `0 / 0`. A strong client signal therefore does not establish correct
+radio operation. Other channel/interoperability effects remain to be measured.
+
+The new package patch selects ADIE1 only for `gemtek,w1701k` on the MT7996
+chip. It retains EEPROM validity checks and leaves other devices unchanged.
+A global ADIE1 change is inappropriate: upstream discussion documents an
+all-iFEM Zyxel variant that regresses with that change.
+
+- [Original W1701K patch report](https://lkml.rescloud.iu.edu/hypermail/linux/kernel/2511.1/01728.html)
+- [Mixed/all-iFEM register comparison](https://lists.infradead.org/pipermail/linux-arm-kernel/2025-December/1089883.html)
+
+CI compiles and executes the actual pinned driver C functions with register
+fixtures. The old driver must reproduce the failure; the patched driver must
+accept mixed-FEM factory fields, reject wrong FEM/stream counts, and preserve
+other chip/board and MCU-error paths. Image audits repeat this test on the
+actual prepared source and check that the compiled module contains the fix.
+The new `w1701k-calibration-check`, also included in `w1701k-acceptance`,
+fails if live FEM differs from factory, EEPROM fallback is logged, or the
+W1701K driver marker is missing. Whole EEPROM hashes are not required to match:
+the driver legitimately merges chip efuse calibration bytes before upload.
+
+The release remains a hardware-unvalidated candidate until RAM boot, live
+calibration checks and sustained LAN throughput tests pass. No client-specific
+EEPROM, factory partition, MAC address or wireless key is committed to GitHub.

@@ -17,6 +17,7 @@ if [ "$(ubus call system board | jsonfilter -e '@.rootfs_type')" = initramfs ]; 
 fi
 
 echo 'Checking LAN, wireless and local router services (no password output)'
+/usr/bin/w1701k-calibration-check || bad 'live wireless calibration check failed'
 ip -4 address show dev br-lan | grep -q 'inet 10\.98\.0\.1/24' || bad 'LAN is not 10.98.0.1/24'
 [ "$(uci -q get network.lan.ipaddr)" = '10.98.0.1' ] || bad 'LAN address not persisted'
 [ "$(uci -q get network.lan.netmask)" = '255.255.255.0' ] || bad 'LAN netmask not persisted'
