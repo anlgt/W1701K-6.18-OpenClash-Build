@@ -1,0 +1,46 @@
+#!/bin/sh
+# Read-only policy/sensor acceptance. Never changes a frequency or fan setting.
+[ "$(cat /tmp/sysinfo/board_name)" = gemtek,w1701k ] || { echo 'FAIL: wrong board'; exit 1; }
+failed=0
+policy=/sys/devices/system/cpu/cpufreq/policy0
+if [ ! -d "$policy" ]; then
+	echo 'FAIL: CPUFreq policy0 is missing'; failed=1
+else
+	current=$(cat "$policy/scaling_cur_freq" 2>/dev/null)
+	governor=$(cat "$policy/scaling_governor" 2>/dev/null)
+	available=$(cat "$policy/scaling_available_frequencies" 2>/dev/null)
+	maximum=$(cat "$policy/cpuinfo_max_freq" 2>/dev/null)
+	case "$current" in
+		''|*[!0-9]*) echo 'FAIL: CPU frequency unreadable'; failed=1 ;;
+		*) if [ "$current" -lt 500000 ] || [ "$current" -gt 1200000 ]; then
+			echo 'FAIL: CPU frequency outside validated stock range'; failed=1
+		   fi ;;
+	esac
+	[ -n "$governor" ] && [ "$governor" != unknown ] || { echo 'FAIL: CPU governor unavailable'; failed=1; }
+	[ "$maximum" = 1200000 ] || { echo 'FAIL: CPU maximum OPP differs from 1200 MHz'; failed=1; }
+	printf '%s\n' "$available" | grep -qw 500000 && printf '%s\n' "$available" | grep -qw 1200000 || {
+		echo 'FAIL: stock CPU OPP endpoints missing'; failed=1;
+	}
+	echo "CPU: current=${current:-unavailable} kHz governor=${governor:-unavailable} max=${maximum:-unavailable} kHz"
+fi
+for iface in lan wan; do
+	sensor=
+	for candidate in /sys/class/net/"$iface"/phydev/hwmon/hwmon*/temp1_input; do
+		[ -r "$candidate" ] && { sensor="$candidate"; break; }
+	done
+	if [ -z "$sensor" ]; then
+		echo "FAIL: $iface PHY temperature interface missing"; failed=1; continue
+	fi
+	temperature=$(cat "$sensor" 2>/dev/null) || {
+		echo "FAIL: $iface PHY temperature read failed"; failed=1; continue;
+	}
+	if ! printf '%s\n' "$temperature" | grep -Eq '^-?[0-9]+$'; then
+		echo "FAIL: $iface PHY temperature is invalid"; failed=1; continue
+	fi
+	if [ "$temperature" -lt -40000 ] || [ "$temperature" -gt 150000 ]; then
+		echo "FAIL: $iface PHY temperature outside sensor range"; failed=1; continue
+	fi
+	echo "$iface PHY: $temperature millidegrees C"
+done
+[ "$failed" -eq 0 ] || exit 1
+echo 'PASS: live CPUFreq policy and both EN8811H temperature sensors available'

@@ -6,6 +6,8 @@ on:
     branches: [main]
     paths:
       - 'patches/mt76/**'
+      - 'patches/kernel/**'
+      - 'patches/005-w1701k-status-telemetry.patch'
 
 permissions:
   contents: write
@@ -28,7 +30,7 @@ env:
   MIHOMO_TAG: v1.19.33
   MIHOMO_URL: https://github.com/MetaCubeX/mihomo/releases/download/v1.19.33/mihomo-linux-arm64-v1.19.33.gz
   MIHOMO_SHA256: ba408b317080ee265c46cb923a50018c1b82cbd708551cdd46a1e3e307396187
-  RELEASE_TAG: w1701k-6.18.60-gt-femfix-r${{ github.run_number }}-${{ github.run_attempt }}
+  RELEASE_TAG: w1701k-6.18.60-gt-statusfix-r${{ github.run_number }}-${{ github.run_attempt }}
   GH_TOKEN: ${{ github.token }}
   TZ: Asia/Shanghai
 
@@ -76,6 +78,7 @@ jobs:
           python3 scripts/check-w1701k-network-defaults.py
           sh -n w1701k-refresh-files/usr/bin/w1701k-acceptance
           sh -n w1701k-refresh-files/usr/bin/w1701k-calibration-check
+          sh -n w1701k-refresh-files/usr/bin/w1701k-monitor-check
           python3 -m py_compile scripts/audit-w1701k-image.py
           sh -n w1701k-refresh-files/etc/uci-defaults/99-w1701k-network
           sh -n w1701k-refresh-files/etc/hotplug.d/ieee80211/99-w1701k-network
@@ -120,6 +123,10 @@ jobs:
           python3 ../scripts/prepare-w1701k-source.py
           git apply --check ../patches/002-w1701k-app-compat.patch
           git apply ../patches/002-w1701k-app-compat.patch
+          git apply --check ../patches/005-w1701k-status-telemetry.patch
+          git apply ../patches/005-w1701k-status-telemetry.patch
+          node ../scripts/check-w1701k-status-ui.mjs .
+          python3 ../scripts/check-w1701k-status-rpc.py .
           git diff --check
 
           dts=target/linux/airoha/dts/an7581-w1701k.dts
@@ -298,6 +305,9 @@ jobs:
         working-directory: openwrt
         run: |
           make target/linux/prepare -j1 V=s
+          kernel_dir=$(find build_dir -type d -path '*/linux-airoha_an7581/linux-6.18.60' -print -quit)
+          test -n "$kernel_dir"
+          python3 ../scripts/check-w1701k-status-kernel.py "$kernel_dir"
 
       - name: Build and preserve the full OpenClash sysupgrade
         working-directory: openwrt
@@ -487,7 +497,7 @@ jobs:
       - name: Publish Lite RAM ITB and full OpenClash sysupgrade
         run: |
           printf '%s\n' \
-            '## W1701K 6.18.60 W1701K mixed-FEM fix' \
+            '## W1701K 6.18.60 CPUFreq and PHY telemetry fix' \
             '' \
             '- `initramfs-uImage.itb` is the small Lite RAM-test image without OpenClash, Mihomo, Ruby or Bash.' \
             '- `squashfs-sysupgrade.bin` is the full flash image with OpenClash, its ARM64 Mihomo core and proxy dependencies.' \
@@ -495,6 +505,9 @@ jobs:
             '- Chinese LuCI, Argon, UPnP, irqbalance, SoC Status, FlowSense, Fan Control, Wi-Fi 7 and MLO remain in both images.' \
             '- This release intentionally publishes no APK files and no `packages.adb` repository.' \
             '- W1701K-only mt76 fix: inspect ADIE1 to identify the mixed iFEM/eFEM board and retain factory calibration.' \
+            '- W1701K CPUFreq: retain ATF SMC where available; otherwise use a board-specific PLL fallback limited to stock 500-1200 MHz OPPs.' \
+            '- EN8811H: add read-only hwmon temperatures using the vendor MCU command; missing/error readings display Unavailable instead of 0 C.' \
+            '- New w1701k-monitor-check verifies live CPUFreq policy and both PHY sensors after boot. Kernel and UI regression checks passed in CI; hardware acceptance is still required.' \
             '- w1701k-calibration-check now checks the live FEM fields and fails on EEPROM fallback; calibration data are never embedded from another unit.' \
             '- Fan control is installed but disabled until its W1701K curve is validated.' \
             '- Fresh-install defaults: LAN 10.98.0.1/24, SSID GT, CN, 2.4/5 GHz enabled, 6 GHz disabled.' \
@@ -507,7 +520,7 @@ jobs:
             > release-notes.md
 
           gh release create "$RELEASE_TAG" \
-            --title "W1701K 6.18.60 GT mixed-FEM fix (RAM + OpenClash)" \
+            --title "W1701K 6.18.60 GT CPUFreq and PHY status fix" \
             --notes-file release-notes.md \
             --target "$GITHUB_SHA" \
             --draft

@@ -18,6 +18,7 @@ fi
 
 echo 'Checking LAN, wireless and local router services (no password output)'
 /usr/bin/w1701k-calibration-check || bad 'live wireless calibration check failed'
+/usr/bin/w1701k-monitor-check || bad 'CPUFreq/PHY telemetry check failed'
 ip -4 address show dev br-lan | grep -q 'inet 10\.98\.0\.1/24' || bad 'LAN is not 10.98.0.1/24'
 [ "$(uci -q get network.lan.ipaddr)" = '10.98.0.1' ] || bad 'LAN address not persisted'
 [ "$(uci -q get network.lan.netmask)" = '255.255.255.0' ] || bad 'LAN netmask not persisted'
@@ -26,8 +27,18 @@ for service in network dnsmasq uhttpd dropbear; do
 	/etc/init.d/"$service" running >/dev/null 2>&1 || bad "$service is not running"
 done
 nslookup localhost 127.0.0.1 >/dev/null 2>&1 || bad 'local DNS query failed'
-curl -fsS --max-time 10 -o /dev/null http://127.0.0.1/cgi-bin/luci/ || bad 'LuCI HTTP failed'
-curl -kfsS --max-time 10 -o /dev/null https://127.0.0.1/cgi-bin/luci/ || bad 'LuCI local HTTPS failed'
+check_luci() {
+	local response
+	response=$(curl --noproxy '*' -ksS --max-time 10 -i "$1") || return 1
+	printf '%s\n' "$response" | grep -qi '<title>.*LuCI' || return 1
+	if printf '%s\n' "$response" | grep -Eq '^HTTP/[0-9.]+ 200 '; then return 0; fi
+	# LuCI intentionally returns 403 for the unauthenticated login form.
+	printf '%s\n' "$response" | grep -Eq '^HTTP/[0-9.]+ 403 ' &&
+	printf '%s\n' "$response" | grep -qi '^x-luci-login-required: yes' &&
+	printf '%s\n' "$response" | grep -q 'name="luci_password"'
+}
+check_luci http://127.0.0.1/cgi-bin/luci/ || bad 'LuCI HTTP failed'
+check_luci https://127.0.0.1/cgi-bin/luci/ || bad 'LuCI local HTTPS failed'
 
 wireless_status=$(ubus call network.wireless status) || bad 'wireless status unavailable'
 config_load wireless

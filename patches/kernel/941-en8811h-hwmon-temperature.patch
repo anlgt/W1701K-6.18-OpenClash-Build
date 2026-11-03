@@ -1,0 +1,114 @@
+Subject: [PATCH] net: phy: air_en8811h: expose vendor temperature command through hwmon
+
+Retain the upstream Ethernet/firmware implementation and add a read-only
+hwmon sensor. The command sequence and degree-C result are documented in:
+https://github.com/mediatek/mtk-openwrt-feeds/blob/a7ace89b5c4d50ae2ef92690c32a0d37a65b6ca3/21.02/files/target/linux/mediatek/files-5.4/drivers/net/phy/air_en8811h_api.c
+(airphy_temp_show). Serialize MCU commands with phydev->lock, propagate
+MDIO errors, and return unavailable for unready/invalid firmware readings.
+A monitoring registration failure must not prevent Ethernet from probing.
+
+--- a/drivers/net/phy/air_en8811h.c
++++ b/drivers/net/phy/air_en8811h.c
+@@ -11,6 +11,7 @@
+  * Copyright (C) 2023 Airoha Technology Corp.
+  */
+ 
++#include <linux/hwmon.h>
+ #include <linux/clk.h>
+ #include <linux/clk-provider.h>
+ #include <linux/phy.h>
+@@ -918,6 +919,86 @@
+ 	return devm_of_clk_add_hw_provider(dev, of_clk_hw_simple_get, hw);
+ }
+ 
++#if IS_REACHABLE(CONFIG_HWMON)
++/* MediaTek/Airoha vendor command: request temperature, then read degrees C. */
++static int en8811h_hwmon_read(struct device *dev,
++                             enum hwmon_sensor_types type, u32 attr,
++                             int channel, long *value)
++{
++	struct phy_device *phydev = dev_get_drvdata(dev);
++	u32 raw;
++	int ret;
++
++	if (type != hwmon_temp || attr != hwmon_temp_input || channel)
++		return -EOPNOTSUPP;
++
++	/* Serialize the MCU command with phylib configuration/restart work. */
++	mutex_lock(&phydev->lock);
++	ret = phy_read_mmd(phydev, MDIO_MMD_VEND1, EN8811H_PHY_FW_STATUS);
++	if (ret < 0)
++		goto out;
++	if (ret != EN8811H_PHY_READY) {
++		ret = -EAGAIN;
++		goto out;
++	}
++	ret = phy_write_mmd(phydev, MDIO_MMD_VEND1, 0x800e, 0x1100);
++	if (ret < 0)
++		goto out;
++	ret = phy_write_mmd(phydev, MDIO_MMD_VEND1, 0x800f, 0x00e5);
++	if (ret < 0)
++		goto out;
++	ret = air_buckpbus_reg_read(phydev, 0x3b38, &raw);
++	if (ret < 0)
++		goto out;
++	if ((s32)raw < -40 || (s32)raw > 150) {
++		ret = -ENODATA;
++		goto out;
++	}
++	*value = (s32)raw * 1000L;
++out:
++	mutex_unlock(&phydev->lock);
++	return ret;
++}
++
++static umode_t en8811h_hwmon_is_visible(const void *data,
++                                      enum hwmon_sensor_types type,
++                                      u32 attr, int channel)
++{
++	return type == hwmon_temp && attr == hwmon_temp_input && !channel ?
++		0444 : 0;
++}
++
++static const struct hwmon_ops en8811h_hwmon_ops = {
++	.is_visible = en8811h_hwmon_is_visible,
++	.read = en8811h_hwmon_read,
++};
++
++static const struct hwmon_channel_info * const en8811h_hwmon_info[] = {
++	HWMON_CHANNEL_INFO(temp, HWMON_T_INPUT),
++	NULL,
++};
++
++static const struct hwmon_chip_info en8811h_hwmon_chip_info = {
++	.ops = &en8811h_hwmon_ops,
++	.info = en8811h_hwmon_info,
++};
++
++static void en8811h_hwmon_init(struct phy_device *phydev)
++{
++	struct device *hwmon;
++
++	hwmon = devm_hwmon_device_register_with_info(&phydev->mdio.dev,
++			"en8811h", phydev, &en8811h_hwmon_chip_info, NULL);
++	if (IS_ERR(hwmon))
++		phydev_warn(phydev, "temperature sensor unavailable: %ld\n",
++			    PTR_ERR(hwmon));
++	else
++		phydev_info(phydev, "EN8811H: temperature sensor registered\n");
++}
++#else
++static void en8811h_hwmon_init(struct phy_device *phydev) { }
++#endif
++
+ static int en8811h_probe(struct phy_device *phydev)
+ {
+ 	struct en8811h_priv *priv;
+@@ -963,6 +1044,7 @@
+ 	if (ret < 0)
+ 		return ret;
+ 
++	en8811h_hwmon_init(phydev);
+ 	return 0;
+ }
+ 

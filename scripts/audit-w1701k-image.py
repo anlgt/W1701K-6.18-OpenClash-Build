@@ -165,6 +165,11 @@ def check_fit(blob, ram, root=None):
     require(cells(pcie.get('num-lanes', b'')) == (2,), 'PCIe x2 is missing')
     require(pcie.get('reg-names') == b'pcie-mac\0sec-pcie-mac\0', 'secondary PCIe registers missing')
     require('airoha,scu' in pcie, 'PCIe SCU binding missing')
+    cpufreq = dtb.get('/cpufreq', {})
+    require(cells(cpufreq.get('reg', b'')) ==
+            (0, 0x1fa20000, 0, 0x2c0, 0, 0x1efbe000, 0, 0x800),
+            'W1701K CPUFreq PLL register resources missing')
+    require(cpufreq.get('reg-names') == b'chip-scu\0mcucfg\0', 'CPUFreq resource names differ')
     memory = next((n for p, n in dtb.items() if p == '/memory@80000000'), {})
     require(cells(memory.get('reg', b'')) == (0, 0x80000000, 0, 0x80000000), 'unexpected RAM size')
     require(cells(dtb['/chosen'].get('linux,usable-memory-range', b'')) ==
@@ -205,7 +210,8 @@ def check_root(root, full):
                   'usr/sbin/uhttpd', 'usr/sbin/dnsmasq', 'sbin/fw4', 'usr/sbin/pppd',
                   'usr/sbin/odhcpd', 'usr/sbin/hostapd', 'usr/sbin/wpa_supplicant',
                   'usr/sbin/iw', 'usr/bin/curl', 'usr/bin/lspci', 'usr/bin/w1701k-acceptance',
-                  'usr/libexec/w1701k-network-defaults', 'usr/bin/w1701k-calibration-check', 'lib/upgrade/platform.sh',
+                  'usr/libexec/w1701k-network-defaults', 'usr/bin/w1701k-calibration-check',
+                  'usr/bin/w1701k-monitor-check', 'lib/upgrade/platform.sh',
                   'lib/firmware/airoha/EthMD32.dm.bin', 'lib/firmware/airoha/EthMD32.DSP.bin',
                   'lib/firmware/airoha/en7581_MT7996_npu_data.bin',
                   'lib/firmware/airoha/en7581_MT7996_npu_rv32.bin')
@@ -222,13 +228,23 @@ def check_root(root, full):
     script = 'usr/libexec/w1701k-network-defaults'
     require((root / script).read_bytes() == (Path('w1701k-refresh-files') / script).read_bytes(),
             'tested network defaults script missing from image')
-    for script in ('usr/bin/w1701k-acceptance', 'usr/bin/w1701k-calibration-check'):
+    for script in ('usr/bin/w1701k-acceptance', 'usr/bin/w1701k-calibration-check', 'usr/bin/w1701k-monitor-check'):
         require((root / script).read_bytes() == (Path('w1701k-refresh-files') / script).read_bytes(),
                 f'tested acceptance script missing from image: {script}')
     drivers = list((root / 'lib/modules').rglob('mt7996e.ko'))
     require(len(drivers) == 1, 'cannot identify compiled mt7996e module')
     require(b'W1701K: use ADIE1 for mixed FEM detection' in drivers[0].read_bytes(),
             'compiled driver does not contain the W1701K FEM fix')
+    phys = list((root / 'lib/modules').rglob('air_en8811h.ko'))
+    require(len(phys) == 1 and b'EN8811H: temperature sensor registered' in phys[0].read_bytes(),
+            'compiled EN8811H module lacks temperature support')
+    rpc = 'usr/libexec/rpcd/luci.fan'
+    require((root / rpc).read_bytes() == (Path('openwrt/package/luci-app-w1700k-fancontrol/root') / rpc).read_bytes(),
+            'tested fan RPC missing from image')
+    for script, marker in (
+            ('www/luci-static/resources/view/fan/status.js', b'Unavailable'),
+            ('www/luci-static/resources/view/airoha_npu/status.js', b'CPUFreq not initialized')):
+        require(marker in (root / script).read_bytes(), f'updated telemetry UI missing: {script}')
     elf_count = 0
     for path in root.rglob('*'):
         if not path.is_file() or path.is_symlink():
@@ -285,10 +301,18 @@ def check_kernel(openwrt, output):
                 'CONFIG_I2C_MT7621', 'CONFIG_NVMEM_LAYOUT_ASCII_ENV'):
         require(selected.get(key) in ('y', 'm'), f'kernel driver missing: {key}')
     require(selected.get('CONFIG_NR_CPUS') == '4', 'kernel does not support all four CPU cores')
+    for feature in ('CONFIG_CPUFREQ_DT', 'CONFIG_ARM_AIROHA_SOC_CPUFREQ', 'CONFIG_AIROHA_CPU_PM_DOMAIN'):
+        require(selected.get(feature) == 'y', f'CPUFreq driver missing: {feature}')
+    run('python3', 'scripts/check-w1701k-status-kernel.py', configs[0].parent)
+    require(b'W1701K: ATF SMC unavailable, using stock-range PLL cpufreq' in
+            (configs[0].parent / 'vmlinux').read_bytes(), 'compiled kernel lacks W1701K CPUFreq fallback')
     output.parent.mkdir(parents=True, exist_ok=True)
     output.with_name(output.stem + '-kernel.config').write_text(text)
     return {'kernel_version': '6.18.60', 'kernel_config_sha256': hashlib.sha256(text.encode()).hexdigest(),
-            'kernel_required_features': {k: selected[k] for k in builtins}}
+            'kernel_required_features': {k: selected[k] for k in builtins},
+            'status_kernel_regressions': 'passed on actual prepared kernel source',
+            'cpu_pll_fallback': 'W1701K only, stock 500-1200 MHz states; compiled kernel marker verified',
+            'phy_hwmon': 'vendor temperature command; compiled module marker verified during rootfs audit'}
 
 
 def main():

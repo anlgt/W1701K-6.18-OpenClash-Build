@@ -80,3 +80,49 @@ the driver legitimately merges chip efuse calibration bytes before upload.
 The release remains a hardware-unvalidated candidate until RAM boot, live
 calibration checks and sustained LAN throughput tests pass. No client-specific
 EEPROM, factory partition, MAC address or wireless key is committed to GitHub.
+
+
+## CPUFreq and PHY telemetry correction (2026-11-03)
+
+Hardware acceptance after the Wi-Fi correction found two separate gaps:
+`cpufreq_policy_online: ->get() failed` left policy0 absent although the PLL
+reported a valid clock; the upstream EN8811H driver exported no temperature
+sensor, while the fan RPC and view converted missing readings into 0 C.
+
+The statusfix build keeps the same pinned 6.18.60 source and Wi-Fi calibration
+fix. It adds a W1701K-only PM-domain PLL fallback, based on upstream fork
+commit `9505125c96ef9b43f54ecb32bcbac5334a10f94a`. The working SMC path remains
+preferred. The fallback accepts only the 15 stock states, 500-1200 MHz, and
+checks the state before writing registers. The board DT supplies the named
+SCU/MCUCFG resources. Existing CPUFreq domain-attachment APIs are retained;
+the obsolete downstream duplicate Kconfig/backport blocks are not copied.
+
+EN8811H gains a read-only hwmon temperature channel using MediaTek's documented
+MCU command (MMD 30: 0x800e=0x1100, 0x800f=0xe5; PBUS 0x3b38 in degrees C).
+The driver serializes requests with phylib, checks MCU readiness, propagates
+MDIO failures and rejects out-of-range data. hwmon registration failure does
+not disable Ethernet. Fan RPC finds sensors by their parent PHY device and
+preserves null for unavailable data; the UI distinguishes missing data from a
+valid 0 C. The CPU page can show a measured PLL clock if CPUFreq is unavailable,
+without inventing a governor or maximum frequency. No fan-control policy is
+changed. Manual direct-PLL controls remain separate from normal CPUFreq; their
+previous unverified 1500 MHz stability claim is removed.
+
+CI executes the actual prepared C functions with register/MDIO fixtures,
+including every stock OPP, divider/bit preservation, out-of-range rejection
+without writes, sensor units/zero/negative readings, errors and lock release.
+It also tests the real shell parser/sensor discovery and JavaScript rendering.
+Image audits verify DT resources, compiled kernel/PHY feature markers and the
+included acceptance/UI files. LuCI's authenticated-login 403 response is now
+recognized only when the expected header and login form are present.
+
+After boot, run `w1701k-monitor-check` (also part of `w1701k-acceptance`). It
+requires a live CPUFreq policy and valid readings from both PHY sensors.
+Compilation and fixture tests do not establish physical sensor accuracy or
+safe frequency transitions on this unit: RAM boot and hardware acceptance are
+still required. Live settings, CPU registers and fan curves are not modified
+by this build task.
+
+References:
+- https://github.com/OpenWRT-fanboy/OpenW1700k/commit/9505125c96ef9b43f54ecb32bcbac5334a10f94a
+- https://github.com/mediatek/mtk-openwrt-feeds/blob/a7ace89b5c4d50ae2ef92690c32a0d37a65b6ca3/21.02/files/target/linux/mediatek/files-5.4/drivers/net/phy/air_en8811h_api.c

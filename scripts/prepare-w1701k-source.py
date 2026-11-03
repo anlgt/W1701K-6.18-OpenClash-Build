@@ -15,7 +15,14 @@ airoha = Path('target/linux/airoha')
 dts = airoha / 'dts/an7581-w1701k.dts'
 if dts.exists():
     raise SystemExit('Review upstream W1701K support before replacing its DTS')
-dts.write_text(legacy(str(dts)), newline='\n')
+dts.write_text(legacy(str(dts)) + '''
+
+/* W1701K ATF may lack AVS SMC; register resources for the stock PLL fallback. */
+&cpufreq {
+	reg = <0x0 0x1fa20000 0x0 0x2c0>, <0x0 0x1efbe000 0x0 0x800>;
+	reg-names = "chip-scu", "mcucfg";
+};
+''', newline='\n')
 patch = (Path(__file__).resolve().parents[1] / 'patches/001-w1701k-pcie-x2-6.18.patch').read_text().encode()
 subprocess.run(['git', 'apply', '--check'], input=patch, check=True)
 subprocess.run(['git', 'apply'], input=patch, check=True)
@@ -69,6 +76,21 @@ mt76_patches = Path('package/kernel/mt76/patches')
 fem_patch = Path(__file__).resolve().parents[1] / 'patches/mt76/120-w1701k-mixed-fem.patch'
 assert not (mt76_patches / fem_patch.name).exists()
 (mt76_patches / fem_patch.name).write_bytes(fem_patch.read_bytes())
+kernel_patches = sorted((Path(__file__).resolve().parents[1] / 'patches/kernel').glob('*.patch'))
+assert len(kernel_patches) == 2
+for source in kernel_patches:
+    dest = airoha / 'patches-6.18' / source.name
+    assert not dest.exists()
+    dest.write_bytes(source.read_bytes())
+    subprocess.run(['git', 'add', '-N', str(dest)], check=True)
+
+# The new PHY sensor uses hwmon from a module: make the dependency explicit.
+modules = Path('package/kernel/linux/modules/netdevices.mk')
+text = modules.read_text()
+match = re.search(r'define KernelPackage/phy-airoha-en8811h\n.*?\nendef', text, re.S)
+assert match and match.group().count('+kmod-libphy') == 1
+block = match.group().replace('+kmod-libphy', '+kmod-libphy +kmod-hwmon-core')
+modules.write_text(text[:match.start()] + block + text[match.end():], newline='\n')
 subprocess.run(['git', 'add', '-N', str(dts), str(caldata)], check=True)
 subprocess.run(['git', 'add', '-N', str(mt76_patches / fem_patch.name)], check=True)
 subprocess.run(['git', 'diff', '--check'], check=True)
