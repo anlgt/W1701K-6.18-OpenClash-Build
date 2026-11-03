@@ -1,0 +1,10 @@
+#!/bin/sh
+
+# Only the package's new, unconfigured factory default carries this marker.
+# A kept user configuration has no marker: preserve its service enable state.
+[ -x /etc/init.d/frpc ] || exit 0
+[ "$(uci -q get 'frpc.@init[0].w1701k_unconfigured')" = 1 ] || exit 0
+/etc/init.d/frpc disable || exit 1
+uci -q delete 'frpc.@init[0].w1701k_unconfigured' || exit 1
+uci -q commit frpc || exit 1
+exit 0

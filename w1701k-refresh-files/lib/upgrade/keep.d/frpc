@@ -1,0 +1,6 @@
+# Preserve the configured client and its external token, TOML fragments and TLS.
+# Contents are read only by sysupgrade on the device, never embedded in builds.
+/etc/config/frpc
+/etc/frp/
+# Locally maintained helper referenced by the existing root crontab.
+/usr/bin/frpc-watchdog

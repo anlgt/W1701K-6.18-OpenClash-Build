@@ -97,6 +97,10 @@ int main(void) {
     smc_result=0; assert(!airoha_cpu_smc_available());
     smc_result=ULONG_MAX; assert(!airoha_cpu_smc_available());
     p.use_smc=false;
+    /* An inherited 1400 MHz PLL must be measured honestly, not clamped. */
+    scu[0x2b4/4]=28U<<24; scu[0x2b8/4]=0;
+    assert(airoha_cpu_pll_clk_get(&p)==1400000000UL && !writes);
+    assert(airoha_cpu_pmdomain_clk_get(&p.hw,0)==1400000000UL && !writes);
     for (unsigned int i=0;i<=14;i++) {
         scu[0x2b4/4]=0x123456; switches=0;
         assert(airoha_cpu_pmdomain_set_performance_state(&p.pd,i)==0);

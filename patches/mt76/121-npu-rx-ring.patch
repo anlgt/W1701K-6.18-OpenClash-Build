@@ -1,0 +1,77 @@
+Subject: [PATCH] wifi: mt76: npu: fix RX ownership and descriptor read ordering
+
+Backport the two commits from openwrt/mt76 PR #1169 without changing their
+RX logic. dma_idx is published only after replacement buffers are installed;
+all slots must be queued and complete before skb construction. Observe the
+first DONE bit, then dma_rmb(), before reading the frame slot count. A second
+DMA read barrier orders the completed-slot checks before payload metadata.
+
+Source: https://github.com/openwrt/mt76/pull/1169
+Commits: 105e1b13a25c874fd7d750d28cd06ab05a778921
+         99e66f2d6eadc5594956bc76f819c78f3794d4b8
+Status: PR remains unmerged as of 2026-11-03; candidate backport, not an
+        upstream-accepted or hardware-validated fix for this W1701K unit.
+Base:   0936617dc529ff9da0385221d3fa6de732231177
+
+The live warning was traced to mt7996_mac_tx_free()'s truncated-info check;
+misframed multi-slot events are consistent with the race addressed here.
+That association does not establish that this patch eliminates every warning.
+
+--- a/npu.c
++++ b/npu.c
+@@ -40,6 +40,11 @@
+ 		nframes++;
+ 	}
+ 
++	/* Hand the slots back to the NPU only once they have a new buffer,
++	 * up to the one kept free in front of the tail.
++	 */
++	Q_WRITE(q, dma_idx, (q->head + 1) % q->ndesc);
++
+ 	return nframes;
+ }
+ 
+@@ -67,18 +72,30 @@
+ 	int i, nframes, index = q->tail;
+ 	struct sk_buff *skb = NULL;
+ 
++	if (!q->queued ||
++	    !FIELD_GET(NPU_RX_DMA_DESC_DONE_MASK, desc[index].ctrl))
++		return NULL;
++
++	/* The slot count is only valid once the first slot is complete */
++	dma_rmb();
+ 	nframes = FIELD_GET(NPU_RX_DMA_PKT_COUNT_MASK, desc[index].info);
+ 	nframes = max_t(int, nframes, 1);
++	if (nframes > q->queued)
++		return NULL;
++
++	/* Only take the frame once all of its slots are complete */
++	for (i = 1; i < nframes; i++) {
++		int idx = (index + i) % q->ndesc;
++
++		if (!FIELD_GET(NPU_RX_DMA_DESC_DONE_MASK, desc[idx].ctrl))
++			return NULL;
++	}
++	dma_rmb();
+ 
+ 	for (i = 0; i < nframes; i++) {
+ 		struct mt76_queue_entry *e = &q->entry[index];
+ 		int len = FIELD_GET(NPU_RX_DMA_DESC_CUR_LEN_MASK,
+ 				    desc[index].ctrl);
+-
+-		if (!FIELD_GET(NPU_RX_DMA_DESC_DONE_MASK, desc[index].ctrl)) {
+-			dev_kfree_skb(skb);
+-			return NULL;
+-		}
+ 
+ 		dma_sync_single_for_cpu(dev->dma_dev, e->dma_addr[0],
+ 					e->dma_len[0],
+@@ -108,7 +125,6 @@
+ 	}
+ 	q->tail = index;
+ 	q->queued -= i;
+-	Q_WRITE(q, dma_idx, q->tail);
+ 
+ 	return skb;
+ }

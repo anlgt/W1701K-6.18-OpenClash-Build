@@ -13,6 +13,7 @@ concurrency:
 env:
   SOURCE_URL: https://github.com/OpenWRT-fanboy/OpenW1700k.git
   SOURCE_COMMIT: 778d561059fe01a527cf49451ef4de14f433e303
+  LEGACY_BOARD_COMMIT: 465633077348b8015e5282193af2b9427b6a8b78
   APP_PACK_COMMIT: 38be3a4a0b66ccbb4311a12ad0890de571a0fcce
   PACKAGES_COMMIT: eba6757c2a02ca3f617fb68cc0d3047157e44973
   LUCI_COMMIT: 5599f42b0eb861cd0414391fb412b0947b1e4e13
@@ -24,7 +25,7 @@ env:
   MIHOMO_TAG: v1.19.33
   MIHOMO_URL: https://github.com/MetaCubeX/mihomo/releases/download/v1.19.33/mihomo-linux-arm64-v1.19.33.gz
   MIHOMO_SHA256: ba408b317080ee265c46cb923a50018c1b82cbd708551cdd46a1e3e307396187
-  RELEASE_TAG: w1701k-6.18.60-gt-statusfix-r${{ github.run_number }}-${{ github.run_attempt }}
+  RELEASE_TAG: w1701k-6.18.60-gt-audit-frpc-r${{ github.run_number }}-${{ github.run_attempt }}
   GH_TOKEN: ${{ github.token }}
   TZ: Asia/Shanghai
 
@@ -75,14 +76,20 @@ jobs:
           sh -n w1701k-refresh-files/usr/bin/w1701k-monitor-check
           python3 -m py_compile scripts/audit-w1701k-image.py
           sh -n w1701k-refresh-files/etc/uci-defaults/99-w1701k-network
+          sh -n w1701k-refresh-files/etc/uci-defaults/99-w1701k-frpc
           sh -n w1701k-refresh-files/etc/hotplug.d/ieee80211/99-w1701k-network
 
       - name: Fetch the pinned 6.18.60 W1701K source
         run: |
           git init openwrt
           git -C openwrt remote add origin "$SOURCE_URL"
-          git -C openwrt fetch --depth 1 origin "$SOURCE_COMMIT"
-          git -C openwrt checkout --detach FETCH_HEAD
+          # Fetch the three immutable trees once. Background maintenance and
+          # repeated shallow-boundary updates can race on GitHub runners.
+          git -C openwrt config maintenance.auto false
+          git -C openwrt config gc.auto 0
+          git -C openwrt fetch --no-auto-maintenance --depth 1 origin \
+            "$SOURCE_COMMIT" "$APP_PACK_COMMIT" "$LEGACY_BOARD_COMMIT"
+          git -C openwrt checkout --detach "$SOURCE_COMMIT"
           test "$(git -C openwrt rev-parse HEAD)" = "$SOURCE_COMMIT"
           grep -Fqx 'KERNEL_PATCHVER:=6.18' openwrt/target/linux/airoha/Makefile
           grep -Fqx 'LINUX_VERSION-6.18 = .60' openwrt/target/linux/generic/kernel-6.18
@@ -99,7 +106,7 @@ jobs:
       - name: Import the W1700K reference application pack
         working-directory: openwrt
         run: |
-          git fetch --depth 1 origin "$APP_PACK_COMMIT"
+          git cat-file -e "$APP_PACK_COMMIT^{commit}"
           app_paths=(
             # FlowSense source is needed by the shared compatibility patch;
             # it is explicitly excluded from both firmware images.
@@ -113,12 +120,14 @@ jobs:
       - name: Apply and verify W1701K compatibility fixes
         working-directory: openwrt
         run: |
-          git fetch --depth 1 origin 465633077348b8015e5282193af2b9427b6a8b78
+          git cat-file -e "$LEGACY_BOARD_COMMIT^{commit}"
           python3 ../scripts/prepare-w1701k-source.py
           git apply --check ../patches/002-w1701k-app-compat.patch
           git apply ../patches/002-w1701k-app-compat.patch
           git apply --check ../patches/005-w1701k-status-telemetry.patch
           git apply ../patches/005-w1701k-status-telemetry.patch
+          git apply --check ../patches/006-w1701k-cpufreq-controls.patch
+          git apply ../patches/006-w1701k-cpufreq-controls.patch
           node ../scripts/check-w1701k-status-ui.mjs .
           python3 ../scripts/check-w1701k-status-rpc.py .
           git diff --check
@@ -165,6 +174,19 @@ jobs:
           patch -d mt76-fem-test -p1 < patches/mt76/120-w1701k-mixed-fem.patch
           python3 scripts/check-w1701k-mt76.py mt76-fem-test
 
+      - name: Reproduce and verify NPU RX ownership and descriptor races
+        run: |
+          mt76_revision=0936617dc529ff9da0385221d3fa6de732231177
+          mkdir -p mt76-npu-rx-test
+          for source_name in npu.c airoha_offload.h; do
+            curl -fLsS --retry 5 "https://raw.githubusercontent.com/openwrt/mt76/$mt76_revision/$source_name" \
+              -o "mt76-npu-rx-test/$source_name"
+          done
+          ulimit -c 0
+          python3 scripts/check-w1701k-npu-rx.py mt76-npu-rx-test --expect-broken
+          patch -d mt76-npu-rx-test -p1 < patches/mt76/121-npu-rx-ring.patch
+          python3 scripts/check-w1701k-npu-rx.py mt76-npu-rx-test
+
       - name: Pin feeds and third-party LuCI packages
         working-directory: openwrt
         run: |
@@ -179,6 +201,9 @@ jobs:
           test "$(git -C feeds/routing rev-parse HEAD)" = "$ROUTING_COMMIT"
           ./scripts/feeds install -a
           python3 ../scripts/prepare-w1701k-feeds.py
+          python3 ../scripts/check-w1701k-frpc.py --init feeds/packages/net/frp/files/frpc.init
+          sh -n feeds/packages/net/frp/files/frpc.init
+          node --check feeds/luci/applications/luci-app-frpc/htdocs/luci-static/resources/view/frpc.js
 
           clone_pinned() {
             repo_url="$1"
@@ -228,6 +253,7 @@ jobs:
             openwrt/files/usr/bin/w1701k-acceptance \
             openwrt/files/usr/libexec/w1701k-network-defaults \
             openwrt/files/etc/uci-defaults/99-w1701k-network \
+            openwrt/files/etc/uci-defaults/99-w1701k-frpc \
             openwrt/files/etc/hotplug.d/ieee80211/99-w1701k-network
 
           test "${#W1701K_WIFI_PASSWORD}" -ge 8
@@ -263,7 +289,7 @@ jobs:
           cp .config ../"resolved-$CONFIG_SEED"
           python3 ../scripts/check-w1701k-config.py .config ../"$CONFIG_SEED"
 
-          required_packages='apk-openssl luci luci-mod-network luci-app-package-manager luci-i18n-base-zh-cn luci-app-upnp luci-theme-argon luci-app-openclash luci-compat bash curl dnsmasq-full ip-full kmod-inet-diag kmod-nft-tproxy kmod-tun ruby ruby-yaml unzip irqbalance luci-app-irqbalance luci-app-airoha-npu luci-app-w1700k-fancontrol airoha-en7581-mt7996-npu-firmware kmod-phy-airoha-en8811h airoha-en8811h-firmware kmod-hwmon-nct7802 kmod-mt7996e kmod-mt7996-firmware iw hostapd-utils wpad-openssl pciutils'
+          required_packages='frpc luci-app-frpc luci-i18n-frpc-zh-cn apk-openssl luci luci-mod-network luci-app-package-manager luci-i18n-base-zh-cn luci-app-upnp luci-theme-argon luci-app-openclash luci-compat bash curl dnsmasq-full ip-full kmod-inet-diag kmod-nft-tproxy kmod-tun ruby ruby-yaml unzip irqbalance luci-app-irqbalance luci-app-airoha-npu luci-app-w1700k-fancontrol airoha-en7581-mt7996-npu-firmware kmod-phy-airoha-en8811h airoha-en8811h-firmware kmod-hwmon-nct7802 kmod-mt7996e kmod-mt7996-firmware iw hostapd-utils wpad-openssl pciutils'
           for package_name in $required_packages; do
             grep -Fqx "CONFIG_PACKAGE_${package_name}=y" .config || {
               echo "Required full-image package was not selected: $package_name"
@@ -271,7 +297,7 @@ jobs:
             }
           done
 
-          required_symbols='CONFIG_USE_APK=y CONFIG_TARGET_ROOTFS_INITRAMFS=y CONFIG_TARGET_ROOTFS_INITRAMFS_SEPARATE=y CONFIG_TARGET_INITRAMFS_COMPRESSION_XZ=y CONFIG_TARGET_ROOTFS_SQUASHFS=y CONFIG_DRIVER_11BE_SUPPORT=y CONFIG_PACKAGE_dnsmasq_full_nftset=y CONFIG_LIBCURL_TFTP=y'
+          required_symbols='CONFIG_USE_APK=y CONFIG_TARGET_ROOTFS_INITRAMFS=y CONFIG_TARGET_ROOTFS_INITRAMFS_SEPARATE=y CONFIG_TARGET_INITRAMFS_COMPRESSION_XZ=y CONFIG_TARGET_ROOTFS_SQUASHFS=y CONFIG_DRIVER_11BE_SUPPORT=y CONFIG_PACKAGE_dnsmasq_full_nftset=y CONFIG_LIBCURL_TFTP=y CONFIG_BUSYBOX_CONFIG_FLOCK=y'
           for symbol in $required_symbols; do
             grep -Fqx "$symbol" .config || {
               echo "Required full-image configuration was not selected: $symbol"
@@ -313,7 +339,7 @@ jobs:
           test -n "$manifest" && test -s "$manifest"
           test -n "$sysupgrade" && test -s "$sysupgrade"
 
-          required_manifest='luci-mod-network luci-app-openclash luci-compat bash curl dnsmasq-full kmod-inet-diag kmod-nft-tproxy kmod-tun ruby ruby-yaml unzip luci-app-upnp luci-theme-argon irqbalance luci-app-airoha-npu luci-app-w1700k-fancontrol airoha-en7581-mt7996-npu-firmware kmod-phy-airoha-en8811h airoha-en8811h-firmware kmod-hwmon-nct7802 kmod-mt7996e kmod-mt7996-firmware wpad-openssl'
+          required_manifest='frpc luci-app-frpc luci-i18n-frpc-zh-cn luci-mod-network luci-app-openclash luci-compat bash curl dnsmasq-full kmod-inet-diag kmod-nft-tproxy kmod-tun ruby ruby-yaml unzip luci-app-upnp luci-theme-argon irqbalance luci-app-airoha-npu luci-app-w1700k-fancontrol airoha-en7581-mt7996-npu-firmware kmod-phy-airoha-en8811h airoha-en8811h-firmware kmod-hwmon-nct7802 kmod-mt7996e kmod-mt7996-firmware wpad-openssl'
           for package_name in $required_manifest; do
             grep -q "^${package_name} - " "$manifest" || {
               echo "Required package missing from full image: $package_name"
@@ -359,7 +385,7 @@ jobs:
             }
           done
 
-          forbidden_packages='luci-app-openclash luci-compat bash dnsmasq-full ruby ruby-yaml unzip'
+          forbidden_packages='frpc luci-app-frpc luci-i18n-frpc-zh-cn luci-app-openclash luci-compat bash dnsmasq-full ruby ruby-yaml unzip'
           for package_name in $forbidden_packages; do
             if grep -Fqx "CONFIG_PACKAGE_${package_name}=y" .config; then
               echo "Bulky package unexpectedly selected in Lite RAM image: $package_name"
@@ -410,7 +436,7 @@ jobs:
             }
           done
 
-          forbidden_manifest='luci-app-openclash luci-compat bash dnsmasq-full ruby ruby-yaml unzip'
+          forbidden_manifest='frpc luci-app-frpc luci-i18n-frpc-zh-cn luci-app-openclash luci-compat bash dnsmasq-full ruby ruby-yaml unzip'
           for package_name in $forbidden_manifest; do
             if grep -q "^${package_name} - " "$manifest"; then
               echo "Bulky package present in Lite RAM image: $package_name"
@@ -446,7 +472,7 @@ jobs:
 
           cp resolved-6.18-openclash.config resolved-6.18-openclash.diffconfig \
             resolved-6.18-lite-ram.config resolved-6.18-lite-ram.diffconfig \
-            openclash-kmods.txt lite-ram-kmods.txt source-patches-applied.diff \
+            openclash-kmods.txt lite-ram-kmods.txt source-patches-applied.diff W1701K-SYSTEM-AUDIT-20261103.md \
             initramfs-layout.txt output/build-record/
           for extra in profiles.json feeds.buildinfo version.buildinfo; do
             [ ! -f "$target_dir/$extra" ] || cp "$target_dir/$extra" output/build-record/
@@ -491,23 +517,24 @@ jobs:
       - name: Publish Lite RAM ITB and full OpenClash sysupgrade
         run: |
           printf '%s\n' \
-            '## W1701K 6.18.60 CPUFreq and PHY telemetry fix' \
+            '## W1701K 6.18.60 system audit, telemetry and frpc' \
             '' \
-            '- `initramfs-uImage.itb` is the small Lite RAM-test image without OpenClash, Mihomo, Ruby or Bash.' \
-            '- `squashfs-sysupgrade.bin` is the full flash image with OpenClash, its ARM64 Mihomo core and proxy dependencies.' \
+            '- `initramfs-uImage.itb` is the small Lite RAM-test image without OpenClash, Mihomo, frpc, Ruby or Bash.' \
+            '- `squashfs-sysupgrade.bin` is the full flash image with OpenClash, its ARM64 Mihomo core, frpc 0.71.0 and Chinese LuCI frpc management.' \
             '- Both images are produced from the same pinned source and have an exactly matching kernel ABI and kernel-module selection.' \
             '- Both images retain Chinese LuCI, standard wireless management, Argon, UPnP, irqbalance, SoC Status and Fan Control.' \
             '- FlowSense (including its npu-jitter monitor), MLO and WiFi7 apps are omitted; MT7996/EHT/Wi-Fi 7 and Airoha NPU/PPE driver support remain.' \
+            '- New frpc installs are unconfigured and disabled; kept configurations retain their service state. New keep rules protect later upgrades; before the first upgrade from r6 separately back up /etc/frp/ and frpc-watchdog.' \
             '- This release intentionally publishes no APK files and no `packages.adb` repository.' \
             '- W1701K-only mt76 fix: inspect ADIE1 to identify the mixed iFEM/eFEM board and retain factory calibration.' \
             '- W1701K CPUFreq: retain ATF SMC where available; otherwise use a board-specific PLL fallback limited to stock 500-1200 MHz OPPs.' \
             '- EN8811H: add read-only hwmon temperatures using the vendor MCU command; missing/error readings display Unavailable instead of 0 C.' \
             '- New w1701k-monitor-check verifies live CPUFreq policy and both PHY sensors after boot. Kernel and UI regression checks passed in CI; hardware acceptance is still required.' \
             '- w1701k-calibration-check now checks the live FEM fields and fails on EEPROM fallback; calibration data are never embedded from another unit.' \
-            '- Fan control is installed but disabled until its W1701K curve is validated.' \
+            '- Fan control is installed but disabled until its W1701K curve is validated. Direct PLL overclock controls are removed; CPUFreq uses stock OPPs.' \
             '- Fresh-install defaults: LAN 10.98.0.1/24, SSID GT, CN, 2.4/5 GHz enabled, 6 GHz disabled.' \
             '- WPA2/WPA3 mixed mode; the requested wireless key is injected from an Actions secret.' \
-            '- Install without keeping old settings to apply the new network defaults.' \
+            '- Fresh network defaults apply only without old settings; retained configuration requires the first-upgrade FRP backup noted above and a separate country/settings review.' \
             '- Both images passed static FIT, NAND layout, architecture, ELF dependency and kernel-module checks; see the image-audit JSON reports.' \
             '- Hardware boot and stability have not been tested by CI; run w1701k-acceptance in RAM with the BIN before flashing.' \
             '' \
@@ -515,7 +542,7 @@ jobs:
             > release-notes.md
 
           gh release create "$RELEASE_TAG" \
-            --title "W1701K 6.18.60 GT CPUFreq and PHY status fix" \
+            --title "W1701K 6.18.60 GT audit fixes + frpc" \
             --notes-file release-notes.md \
             --target "$GITHUB_SHA" \
             --draft

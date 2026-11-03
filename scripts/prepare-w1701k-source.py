@@ -71,11 +71,15 @@ caldata = airoha / 'base-files/lib/preinit/90_extract_caldata'
 assert not caldata.exists()
 caldata.write_text(legacy(str(caldata)), newline='\n')
 
-# Keep the board fix with the mt76 package so it is applied to both images.
+# Apply both the board calibration and NPU RX fixes to both images.
 mt76_patches = Path('package/kernel/mt76/patches')
-fem_patch = Path(__file__).resolve().parents[1] / 'patches/mt76/120-w1701k-mixed-fem.patch'
-assert not (mt76_patches / fem_patch.name).exists()
-(mt76_patches / fem_patch.name).write_bytes(fem_patch.read_bytes())
+driver_patches = sorted((Path(__file__).resolve().parents[1] / 'patches/mt76').glob('*.patch'))
+assert {p.name for p in driver_patches} == {'120-w1701k-mixed-fem.patch', '121-npu-rx-ring.patch'}
+for source in driver_patches:
+    dest = mt76_patches / source.name
+    assert not dest.exists()
+    dest.write_bytes(source.read_bytes())
+    subprocess.run(['git', 'add', '-N', str(dest)], check=True)
 kernel_patches = sorted((Path(__file__).resolve().parents[1] / 'patches/kernel').glob('*.patch'))
 assert len(kernel_patches) == 2
 for source in kernel_patches:

@@ -222,6 +222,28 @@ def check_root(root, full):
     for name in ('etc/init.d/npu-jitter', 'usr/libexec/npu-jitter-daemon',
                  'usr/libexec/rpcd/luci.airoha_flowsense'):
         require(not (root / name).exists(), f'excluded FlowSense runtime present: {name}')
+    keep = (root / 'lib/upgrade/keep.d/frpc').read_text().splitlines()
+    for name in ('/etc/config/frpc', '/etc/frp/', '/usr/bin/frpc-watchdog'):
+        require(name in keep, f'frpc sysupgrade preservation missing: {name}')
+    if full:
+        for name in ('usr/bin/frpc', 'usr/bin/flock', 'etc/init.d/frpc',
+                     'www/luci-static/resources/view/frpc.js',
+                     'usr/share/luci/menu.d/luci-app-frpc.json',
+                     'usr/share/rpcd/acl.d/luci-app-frpc.json'):
+            require(virtual(root, name).is_file(), f'frpc runtime/UI missing: {name}')
+        require((root / 'etc/init.d/frpc').read_bytes() ==
+                Path('openwrt/feeds/packages/net/frp/files/frpc.init').read_bytes(),
+                'frpc init does not match the pinned official UCI/TOML implementation')
+        config = (root / 'etc/config/frpc').read_text()
+        require("option w1701k_unconfigured '1'" in config and config.count('config conf ') == 1,
+                'frpc factory configuration must be unconfigured with no sample proxies')
+        require(not re.search(r'^\s*option\s+token\s', config, re.M), 'frpc factory config contains a token')
+        defaults = 'etc/uci-defaults/99-w1701k-frpc'
+        require((root / defaults).read_bytes() == (Path('w1701k-refresh-files') / defaults).read_bytes(),
+                'fresh-install frpc disable guard missing')
+        run('python3', 'scripts/check-w1701k-frpc.py', '--init', root / 'etc/init.d/frpc', '--root', root)
+    else:
+        require(not (root / 'usr/bin/frpc').exists(), 'frpc unexpectedly inflates the Lite RAM image')
     for directory, pattern in (('lib/firmware', 'mt7996_wm.bin'), ('lib/firmware', 'mt7996_wa.bin'),
                                ('lib/firmware', 'mt7996_dsp.bin'), ('lib/modules', 'mt7996e.ko*')):
         require(any((root / directory).rglob(pattern)), f'missing hardware file {pattern}')
@@ -250,6 +272,17 @@ def check_root(root, full):
             ('www/luci-static/resources/view/fan/status.js', b'Unavailable'),
             ('www/luci-static/resources/view/airoha_npu/status.js', b'CPUFreq not initialized')):
         require(marker in (root / script).read_bytes(), f'updated telemetry UI missing: {script}')
+    npu_rpc = (root / 'usr/libexec/rpcd/luci.airoha_npu').read_text()
+    require('set_overclock()' not in npu_rpc and 'setOverclock' not in npu_rpc,
+            'direct PLL override RPC remains in image')
+    require(npu_rpc.encode() == (Path('openwrt/package/luci-app-airoha-npu/root/usr/libexec/rpcd/luci.airoha_npu')).read_bytes(),
+            'tested SoC RPC missing from image')
+    npu_ui = (root / 'www/luci-static/resources/view/airoha_npu/status.js').read_bytes()
+    require(b'setOverclock' not in npu_ui and b'USXGMII 10G' not in npu_ui,
+            'obsolete SoC controls or foreign-board port labels remain in image')
+    npu_acl = json.loads((root / 'usr/share/rpcd/acl.d/luci-app-airoha-npu.json').read_text())
+    require('/dev/mem' not in npu_acl['luci-app-airoha-npu']['write']['file'],
+            'direct /dev/mem write ACL remains in image')
     elf_count = 0
     for path in root.rglob('*'):
         if not path.is_file() or path.is_symlink():
@@ -293,6 +326,7 @@ def check_root(root, full):
         require(name not in packages, f'excluded optional component present: {name}')
     return {'elf_files_checked': elf_count, 'kernel_modules': modules[0].name,
             'rootfs_dependencies': 'passed', 'package_versions': packages,
+            'frpc_runtime': '0.71.0 version, generated TOML and invalid-config rejection passed' if full else 'not included in Lite RAM',
             'mihomo_runtime_version': '1.19.33' if full else 'not included'}
 
 
@@ -338,7 +372,9 @@ def main():
     require(len(driver_sources) == 1, 'cannot identify actual prepared mt76 source')
     driver_root = driver_sources[0].parent.parent
     run('python3', 'scripts/check-w1701k-mt76.py', driver_root)
+    run('python3', 'scripts/check-w1701k-npu-rx.py', driver_root)
     report['mt76_fem_regression'] = 'passed on actual prepared source'
+    report['mt76_npu_rx_regression'] = '12 fixtures passed on actual prepared source; physical load test required'
     report['w1701k_fem_fix'] = 'ADIE1 on W1701K only; compiled module marker verified during rootfs audit'
     with tempfile.TemporaryDirectory(dir='.') as directory:
         tmp = Path(directory).resolve()

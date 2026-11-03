@@ -1,0 +1,296 @@
+Subject: [PATCH] luci: use kernel CPUFreq and show W1701K diagnostic state accurately
+
+Remove direct-PLL override controls, RPC and /dev/mem ACL so userspace
+cannot bypass PM-domain serialization. Use neutral Ethernet DMA labels,
+report NPU driver binding separately from active offload, and hide invalid
+translated tuples/MAC fields until PPE entries are bound.
+
+--- a/package/luci-app-airoha-npu/root/usr/libexec/rpcd/luci.airoha_npu
++++ b/package/luci-app-airoha-npu/root/usr/libexec/rpcd/luci.airoha_npu
+@@ -1,6 +1,6 @@
+ #!/bin/sh
+ 
+-# Airoha SoC Status RPC backend for LuCI (NPU + CPU + Overclock)
++# Airoha SoC Status RPC backend for LuCI (NPU + CPUFreq)
+ 
+ . /lib/functions.sh
+ 
+@@ -162,6 +162,12 @@
+ 		match($0, /eth=[^ ]+/)
+ 		if (RSTART > 0) {
+ 			eth = substr($0, RSTART+4, RLENGTH-4)
++		}
++
++		# Translated tuple/MAC fields are meaningful only for bound entries.
++		if (state != "BND") {
++			new_flow = ""
++			eth = ""
+ 		}
+ 
+ 		printf "{\"index\":\"%s\",\"state\":\"%s\",\"type\":\"%s %s\",\"orig\":\"%s\",\"new_flow\":\"%s\",\"eth\":\"%s\"}", \
+@@ -283,106 +289,6 @@
+ 	fi
+ }
+ 
+-set_overclock() {
+-	local target_mhz
+-	target_mhz=$(echo "$1" | jsonfilter -e "@.freq_mhz" 2>/dev/null)
+-
+-	if [ -z "$target_mhz" ]; then
+-		echo '{"error":"missing freq_mhz parameter"}'
+-		return
+-	fi
+-
+-	# Validate range (500-1600, crash likely above 1500 at stock voltage)
+-	if [ "$target_mhz" -lt 500 ] || [ "$target_mhz" -gt 1600 ]; then
+-		echo '{"error":"frequency must be 500-1600 MHz"}'
+-		return
+-	fi
+-
+-	if ! command -v devmem > /dev/null 2>&1; then
+-		echo '{"error":"devmem not available"}'
+-		return
+-	fi
+-
+-	# Calculate PCW and posdiv
+-	local posdiv pcw_int
+-	if [ "$target_mhz" -lt 1000 ]; then
+-		posdiv=1
+-		pcw_int=$((target_mhz / 25))
+-	else
+-		posdiv=0
+-		pcw_int=$((target_mhz / 50))
+-	fi
+-
+-	# Lock governor to performance to prevent cpufreq from fighting
+-	echo performance > /sys/devices/system/cpu/cpufreq/policy0/scaling_governor 2>/dev/null
+-
+-	# Read current register values
+-	local cur_clkmux=$(($(devmem 0x1fa201e0)))
+-	local cur_pcw=$(($(devmem 0x1fa202b4)))
+-	local cur_chg=$(($(devmem 0x1fa202b8)))
+-
+-	# Step 1: Enable PLL2 path in CLK_MUX (set bit 2)
+-	devmem 0x1fa201e0 32 $(printf "0x%08X" $((cur_clkmux | 0x4)))
+-
+-	# Step 2: MCUCFG switch to PLL2 (sel=3 in bits[10:9])
+-	local cur_u=$(($(devmem 0x1efbe640)))
+-	devmem 0x1efbe640 32 $(printf "0x%08X" $(((cur_u & 0xFFFFFFE0) | 0x12)))
+-	local cur_s=$(($(devmem 0x1efbe7c0)))
+-	devmem 0x1efbe7c0 32 $(printf "0x%08X" $(((cur_s & 0xFFFFF9FF) | (3 << 9))))
+-
+-	# Step 3: Unlock PLL registers
+-	local cur_p=$(($(devmem 0x1fa20268)))
+-	devmem 0x1fa20268 32 $(printf "0x%08X" $(((cur_p & 0xFFFFFF00) | 0x12)))
+-
+-	# Step 4: Write new PCW integer
+-	devmem 0x1fa202b4 32 $(printf "0x%08X" $(((cur_pcw & 0x00FFFFFF) | (pcw_int << 24))))
+-
+-	# Step 5: Write posdiv and toggle CHG bit
+-	local chg_bit=$((cur_chg & 1))
+-	local cleared=$((cur_chg & 0xFFFFFF8E))
+-	if [ "$chg_bit" -eq 1 ]; then
+-		devmem 0x1fa202b8 32 $(printf "0x%08X" $((cleared | (posdiv << 4))))
+-	else
+-		devmem 0x1fa202b8 32 $(printf "0x%08X" $((cleared | (posdiv << 4) | 1)))
+-	fi
+-
+-	# Step 6: Wait for PLL lock
+-	sleep 0.02
+-
+-	# Step 7: Enable ARMPLL path in CLK_MUX (set bit 0)
+-	local cur_clkmux2=$(($(devmem 0x1fa201e0)))
+-	devmem 0x1fa201e0 32 $(printf "0x%08X" $((cur_clkmux2 | 0x1)))
+-
+-	# Step 8: MCUCFG switch back to ARMPLL
+-	local cur_u2=$(($(devmem 0x1efbe640)))
+-	devmem 0x1efbe640 32 $(printf "0x%08X" $(((cur_u2 & 0xFFFFFFE0) | 0x12)))
+-	local cur_s2=$(($(devmem 0x1efbe7c0)))
+-	devmem 0x1efbe7c0 32 $(printf "0x%08X" $(((cur_s2 & 0xFFFFF9FF) | (1 << 9))))
+-
+-	# Step 9: Clear PLL2 path in CLK_MUX
+-	local cur_clkmux3=$(($(devmem 0x1fa201e0)))
+-	devmem 0x1fa201e0 32 $(printf "0x%08X" $((cur_clkmux3 & 0xFFFFFFFB)))
+-
+-	# Step 10: Re-lock PLL registers
+-	local cur_p2=$(($(devmem 0x1fa20268)))
+-	devmem 0x1fa20268 32 $(printf "0x%08X" $((cur_p2 & 0xFFFFFF00)))
+-
+-	# Verify
+-	local final_pcw=$(($(devmem 0x1fa202b4)))
+-	local final_chg=$(($(devmem 0x1fa202b8)))
+-	local read_pcw=$(( (final_pcw >> 24) & 0x7F ))
+-	local read_posdiv=$(( (final_chg >> 4) & 7 ))
+-	local read_freq
+-	if [ "$read_posdiv" -eq 0 ]; then
+-		read_freq=$((read_pcw * 50))
+-	else
+-		read_freq=$((read_pcw * 50 / (1 << read_posdiv)))
+-	fi
+-
+-	printf '{"result":"ok","target_mhz":%d,"actual_mhz":%d,"pcw":%d,"posdiv":%d}' \
+-		"$target_mhz" "$read_freq" "$read_pcw" "$read_posdiv"
+-}
+-
+ get_frame_engine() {
+ 	if ! command -v devmem > /dev/null 2>&1; then
+ 		echo '{"error":"devmem not available"}'
+@@ -503,7 +409,7 @@
+ 
+ case "$1" in
+ 	list)
+-		echo '{"getStatus":{},"getPpeEntries":{},"getTokenInfo":{},"getFrameEngine":{},"setGovernor":{"governor":"str"},"setMaxFreq":{"freq":"int"},"setOverclock":{"freq_mhz":"int"},"getVlanOffload":{},"setVlanOffload":{"enabled":"int"},"getPPPoEOffload":{},"setPPPoEOffload":{"enabled":"int"}}'
++		echo '{"getStatus":{},"getPpeEntries":{},"getTokenInfo":{},"getFrameEngine":{},"setGovernor":{"governor":"str"},"setMaxFreq":{"freq":"int"},"getVlanOffload":{},"setVlanOffload":{"enabled":"int"},"getPPPoEOffload":{},"setPPPoEOffload":{"enabled":"int"}}'
+ 		;;
+ 	call)
+ 		case "$2" in
+@@ -524,10 +430,6 @@
+ 				read input
+ 				set_max_freq "$input"
+ 				;;
+-			setOverclock)
+-				read input
+-				set_overclock "$input"
+-				;;
+ 			getFrameEngine)
+ 				get_frame_engine
+ 				;;
+--- a/package/luci-app-airoha-npu/htdocs/luci-static/resources/view/airoha_npu/status.js
++++ b/package/luci-app-airoha-npu/htdocs/luci-static/resources/view/airoha_npu/status.js
+@@ -10,7 +10,6 @@
+ var callFrameEngine = rpc.declare({ object: 'luci.airoha_npu', method: 'getFrameEngine' });
+ var callSetGovernor = rpc.declare({ object: 'luci.airoha_npu', method: 'setGovernor', params: ['governor'] });
+ var callSetMaxFreq = rpc.declare({ object: 'luci.airoha_npu', method: 'setMaxFreq', params: ['freq'] });
+-var callSetOverclock = rpc.declare({ object: 'luci.airoha_npu', method: 'setOverclock', params: ['freq_mhz'] });
+ 
+ /* ── Theme-adaptive CSS ── */
+ var themeCSS = '\
+@@ -71,15 +70,15 @@
+ 
+ var psePortMap = [
+ 	{ name: 'CDM1', label: 'CPU DMA 1',   color: '#607d8b' },
+-	{ name: 'GDM1', label: 'Switch 1G',   color: '#ff9800' },
+-	{ name: 'GDM2', label: 'WAN 10G',     color: '#4caf50' },
++	{ name: 'GDM1', label: 'Ethernet DMA 1',   color: '#ff9800' },
++	{ name: 'GDM2', label: 'Ethernet DMA 2',     color: '#4caf50' },
+ 	{ name: 'GDM3', label: 'GDM3',        color: '#607d8b' },
+ 	{ name: 'PPE1', label: 'PPE Eng 1',   color: '#2196f3' },
+ 	{ name: 'CDM2', label: 'CPU DMA 2',   color: '#607d8b' },
+ 	{ name: 'CDM3', label: 'CDM3',        color: '#607d8b' },
+ 	{ name: 'CDM4', label: 'WDMA WiFi',   color: '#9c27b0' },
+ 	{ name: 'PPE2', label: 'PPE Eng 2',   color: '#2196f3' },
+-	{ name: 'GDM4', label: 'LAN2 10G',    color: '#4caf50' }
++	{ name: 'GDM4', label: 'Ethernet DMA 4',    color: '#4caf50' }
+ ];
+ 
+ function fmtFreq(khz) { return (!khz || khz === 0) ? 'N/A' : (khz / 1000).toFixed(0) + ' MHz'; }
+@@ -239,7 +238,7 @@
+ 	var npuCard = E('div', { 'class': 'soc-card', 'style': 'border-color:'+(npuActive?'#00bcd4':'var(--soc-border)') }, [
+ 		E('div', { 'style': 'display:flex;justify-content:space-between;align-items:center;margin-bottom:4px' }, [
+ 			E('span', { 'style': 'font-weight:bold;color:#00bcd4;font-size:14px' }, 'NPU'),
+-			E('span', { 'style': 'background:'+(npuActive?'#00695c':'#666')+';color:#fff;padding:1px 7px;border-radius:3px;font-size:10px;font-weight:600' }, npuActive ? 'ACTIVE' : 'OFF')
++			E('span', { 'style': 'background:'+(npuActive?'#00695c':'#666')+';color:#fff;padding:1px 7px;border-radius:3px;font-size:10px;font-weight:600' }, npuActive ? 'DRIVER BOUND' : 'NOT BOUND')
+ 		]),
+ 		E('div', { 'class': 'soc-label', 'style': 'margin-bottom:4px' }, '8x RISC-V via PCIe RAM'),
+ 		E('div', { 'style': 'font-size:11px' }, [
+@@ -298,9 +297,9 @@
+ 		]),
+ 		// Row 1: GDM ports
+ 		E('div', { 'class': 'soc-gdm-grid' }, [
+-			gdmCard('gdm1', 'GDM1', 'Internal Switch (1G LAN3/4)', '#ff9800', 'P1'),
+-			gdmCard('gdm2', 'GDM2', 'WAN (USXGMII 10G)', '#4caf50', 'P2'),
+-			gdmCard('gdm4', 'GDM4', 'LAN2 (USXGMII 10G)', '#4caf50', 'P9')
++			gdmCard('gdm1', 'GDM1', 'Ethernet DMA 1', '#ff9800', 'P1'),
++			gdmCard('gdm2', 'GDM2', 'Ethernet DMA 2', '#4caf50', 'P2'),
++			gdmCard('gdm4', 'GDM4', 'Ethernet DMA 4', '#4caf50', 'P9')
+ 		]),
+ 		// Row 2: CDM1/CDM2 (CPU) + CDM4/WiFi
+ 		E('div', { 'style': 'display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:10px' }, [
+@@ -371,31 +370,14 @@
+ 	}}, fs.map(function(f){return E('option',{'value':f,'selected':parseInt(f)===parseInt(cur)?'':null},(parseInt(f)/1000).toFixed(0)+' MHz');}));
+ }
+ 
+-function renderOcControls() {
+-	var inp = E('input',{'id':'oc-freq-input','type':'number','min':'500','max':'1600','step':'50','value':'1400','class':'cbi-input-text','style':'width:100px'});
+-	var btn = E('button',{'class':'cbi-button cbi-button-action','style':'margin-left:8px','click':function(){
+-		var f=parseInt(document.getElementById('oc-freq-input').value);
+-		if(isNaN(f)||f<500||f>1600){ui.addNotification(null,E('p',{},_('Must be 500-1600 MHz')),'error');return;}
+-		if(f>1400&&!confirm('Frequencies above 1400 MHz may be unstable. Continue?')) return;
+-		btn.disabled=true;btn.textContent=_('Applying...');
+-		callSetOverclock(f).then(function(r){btn.disabled=false;btn.textContent=_('Apply');
+-			if(r&&r.error) ui.addNotification(null,E('p',{},_('Failed: ')+r.error),'error');
+-			else if(r&&r.result==='ok') ui.addNotification(null,E('p',{},_('CPU set to ')+r.actual_mhz+' MHz'),'info');
+-		}).catch(function(e){btn.disabled=false;btn.textContent=_('Apply');});
+-	}},_('Apply'));
+-	return E('div',{'style':'display:flex;align-items:center;gap:8px;flex-wrap:wrap'},[
+-		inp, E('span',{'class':'soc-muted'},'MHz'), btn,
+-		E('span',{'class':'soc-muted','style':'font-size:85%;margin-left:8px'},_('Direct PLL override. Stock maximum 1200 MHz.'))
+-	]);
+-}
+-
+ /* ── PPE Table ── */
+ function renderPpeRows(entries) {
+ 	return entries.slice(0,100).map(function(e) {
+-		var eth = e.eth||''; if(eth==='00:00:00:00:00:00->00:00:00:00:00:00') eth='-';
++		var bound = e.state === 'BND';
++		var eth = bound ? (e.eth||'') : '-'; if(eth==='00:00:00:00:00:00->00:00:00:00:00:00') eth='-';
+ 		return E('tr',{'class':'tr'},[
+ 			E('td',{'class':'td'},e.index), E('td',{'class':'td'},E('span',{'class':e.state==='BND'?'label-success':''},e.state)),
+-			E('td',{'class':'td'},e.type), E('td',{'class':'td'},e.orig||'-'), E('td',{'class':'td'},e.new_flow||'-'), E('td',{'class':'td'},eth)
++			E('td',{'class':'td'},e.type), E('td',{'class':'td'},e.orig||'-'), E('td',{'class':'td'},bound ? (e.new_flow||'-') : '-'), E('td',{'class':'td'},eth)
+ 		]);
+ 	});
+ }
+@@ -422,7 +404,6 @@
+ 					E('tr',{'class':'tr'},[ E('td',{'class':'td','width':'33%'},E('strong',{},_('Current Frequency'))), E('td',{'class':'td'}, renderFreqBar(st.cpu_hw_freq || st.cpu_cur_freq,st.cpu_min_freq,st.cpu_max_freq,st.pll_freq_mhz,st.cpu_governor)) ]),
+ 					E('tr',{'class':'tr'},[ E('td',{'class':'td'},E('strong',{},_('Governor'))), E('td',{'class':'td'}, renderGovSelect(st.cpu_avail_governors,st.cpu_governor)) ]),
+ 					E('tr',{'class':'tr'},[ E('td',{'class':'td'},E('strong',{},_('Max Frequency'))), E('td',{'class':'td'}, renderMaxFreqSelect(st.cpu_avail_freqs,st.cpu_max_freq)) ]),
+-					E('tr',{'class':'tr'},[ E('td',{'class':'td'},E('strong',{},_('Overclock'))), E('td',{'class':'td'}, renderOcControls()) ]),
+ 					E('tr',{'class':'tr'},[ E('td',{'class':'td'},E('strong',{},_('CPU Cores'))), E('td',{'class':'td'},(st.cpu_count||0).toString()) ])
+ 				])
+ 			]),
+@@ -433,8 +414,8 @@
+ 				E('table',{'class':'table'},[
+ 					E('tr',{'class':'tr'},[ E('td',{'class':'td','width':'33%'},E('strong',{},_('NPU Status'))),
+ 						E('td',{'class':'td','id':'npu-status'}, st.npu_loaded ?
+-							E('span',{'class':'label-success'},_('Active')+(st.npu_device?' ('+st.npu_device+')':'')) :
+-							E('span',{'class':'label-danger'},_('Not Active'))) ]),
++							E('span',{'class':'label-success'},_('Driver bound')+(st.npu_device?' ('+st.npu_device+')':'')) :
++							E('span',{'class':'label-danger'},_('Driver not bound'))) ]),
+ 					E('tr',{'class':'tr'},[ E('td',{'class':'td'},E('strong',{},_('Firmware / Clock / Cores'))),
+ 						E('td',{'class':'td','id':'npu-info'}, (st.npu_version||'N/A')+' | '+(st.npu_clock?(st.npu_clock/1e6).toFixed(0)+' MHz':'N/A')+' | '+(st.npu_cores||0)+' cores') ]),
+ 					E('tr',{'class':'tr'},[ E('td',{'class':'td'},E('strong',{},_('Reserved Memory'))),
+@@ -471,7 +452,7 @@
+ 				var ps=document.getElementById('pppoe-offload-select'); if(ps&&!ps.matches(':focus')) ps.value=(po.enabled?'1':'0');
+ 
+ 				var se=document.getElementById('npu-status');
+-				if(se){se.innerHTML='';var sp=document.createElement('span');sp.className=st.npu_loaded?'label-success':'label-danger';sp.textContent=st.npu_loaded?(_('Active')+(st.npu_device?' ('+st.npu_device+')':'')):_('Not Active');se.appendChild(sp);}
++				if(se){se.innerHTML='';var sp=document.createElement('span');sp.className=st.npu_loaded?'label-success':'label-danger';sp.textContent=st.npu_loaded?(_('Driver bound')+(st.npu_device?' ('+st.npu_device+')':'')):_('Driver not bound');se.appendChild(sp);}
+ 
+ 				var fc=document.getElementById('fe-container'); if(fc){fc.innerHTML='';fc.appendChild(renderFeDiagram(fe, ti, st));}
+ 
+--- a/package/luci-app-airoha-npu/root/usr/share/rpcd/acl.d/luci-app-airoha-npu.json
++++ b/package/luci-app-airoha-npu/root/usr/share/rpcd/acl.d/luci-app-airoha-npu.json
+@@ -1,6 +1,6 @@
+ {
+ 	"luci-app-airoha-npu": {
+-		"description": "Grant access to Airoha SoC status (NPU + CPU + Overclock)",
++		"description": "Grant access to Airoha SoC status (NPU + CPUFreq)",
+ 		"read": {
+ 			"ubus": {
+ 				"luci.airoha_npu": [ "getStatus", "getPpeEntries", "getTokenInfo", "getFrameEngine", "getVlanOffload", "getPPPoEOffload" ]
+@@ -14,12 +14,11 @@
+ 		},
+ 		"write": {
+ 			"ubus": {
+-				"luci.airoha_npu": [ "setGovernor", "setMaxFreq", "setOverclock", "setVlanOffload", "setPPPoEOffload" ]
++				"luci.airoha_npu": [ "setGovernor", "setMaxFreq", "setVlanOffload", "setPPPoEOffload" ]
+ 			},
+ 			"file": {
+ 				"/sys/devices/system/cpu/cpufreq/policy0/scaling_governor": [ "write" ],
+-				"/sys/devices/system/cpu/cpufreq/policy0/scaling_max_freq": [ "write" ],
+-				"/dev/mem": [ "read", "write" ]
++				"/sys/devices/system/cpu/cpufreq/policy0/scaling_max_freq": [ "write" ]
+ 			}
+ 		}
+ 	}

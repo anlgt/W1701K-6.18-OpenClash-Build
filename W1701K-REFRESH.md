@@ -4,9 +4,11 @@ Use **Build W1701K 6.18.60 GT Hybrid (Lite RAM + OpenClash Flash)** in GitHub Ac
 All firmware compilation and Linux patch preparation run on the Ubuntu Actions runner.
 The original 6.18.44 workflow and releases remain available.
 
-The next build is deferred and this workflow is manual-only (`workflow_dispatch`).
-CPUFreq/PHY telemetry patches below are retained for that build; they have not
-been boot-tested in a new kernel on the user's router.
+This workflow is manual-only (`workflow_dispatch`). The requested audit/frpc
+rebuild includes the CPUFreq/PHY telemetry patches below. These kernel changes
+have not been boot-tested on the user's router. See
+[the system audit](W1701K-SYSTEM-AUDIT-20261103.md) for confirmed findings,
+configuration-only observations and the hardware acceptance boundary.
 
 Both image configurations now exclude `luci-app-airoha-flowsense`,
 `luci-app-mlo` and `luci-app-wifi7`. FlowSense provides PPE/NPU monitoring and
@@ -19,6 +21,25 @@ not a change to live radio configuration. Defconfig and actual-image audits
 reject reintroduction of the three apps and check the standard wireless page.
 FlowSense source is still imported for the shared compatibility patch but is
 not selected for installation.
+
+The full sysupgrade BIN additionally includes official `frpc` 0.71.0,
+`luci-app-frpc` and Simplified Chinese translation from the pinned feeds.
+The existing router runs the same upstream init implementation, including
+file-based token sources and HTTPS bridge plugins; its init is not replaced
+with an older generator. Fresh-install defaults contain no sample proxy or
+credentials and disable the service once using a factory-only marker. A kept
+user configuration has no marker, so its service enable state is retained.
+`/lib/upgrade/keep.d/frpc` preserves `/etc/config/frpc`, all of `/etc/frp/`
+(token, TOML fragments and certificates), and an existing local
+`/usr/bin/frpc-watchdog` helper. Only paths are published, never their contents.
+The new keep rules only take effect when upgrading **from** this new firmware.
+Before the first upgrade from the current r6 image, separately back up or add
+`/etc/frp/` and `/usr/bin/frpc-watchdog` to that old system's backup list.
+Nothing in this rebuild changes the old router's backup list.
+BusyBox flock support remains available for the retained helper. CI executes
+the actual init generator with non-secret fixtures and tests the built ARM64
+frpc version, valid generated TOML and rejection of invalid configuration.
+The Lite RAM recovery ITB omits frpc and its LuCI app to retain the 20 MiB limit.
 
 In the current source, Airoha Ethernet/NPU and MT7530/MMIO drivers are built
 into the kernel. Their old vendor kmod package names are no longer selected;
@@ -121,8 +142,23 @@ not disable Ethernet. Fan RPC finds sensors by their parent PHY device and
 preserves null for unavailable data; the UI distinguishes missing data from a
 valid 0 C. The CPU page can show a measured PLL clock if CPUFreq is unavailable,
 without inventing a governor or maximum frequency. No fan-control policy is
-changed. Manual direct-PLL controls remain separate from normal CPUFreq; their
-previous unverified 1500 MHz stability claim is removed.
+changed. Direct-PLL overclock controls, their RPC method and the /dev/mem ACL
+are removed: multi-command userspace register writes bypass CPUFreq's kernel
+serialization. Governor and stock maximum-frequency controls remain.
+
+An inherited out-of-table PLL value (for example 1400 MHz) is reported at its
+actual value without clipping it to 1200. The PM-domain emits a warning;
+cpufreq-dt's CPUFREQ_NEED_INITIAL_FREQ_CHECK then selects a supported frequency
+from the unchanged 500-1200 MHz table. Fixture tests verify a read-only 1400 MHz
+measurement and subsequent stock transitions. This does not alter the running
+router; behavior of the new kernel must still be checked during RAM boot.
+
+The SoC view uses neutral GDM/Ethernet-DMA labels instead of W1700K's
+hardcoded 1G/10G LAN/WAN map. Its NPU indicator reports driver binding, not
+proof of active traffic offload. PPE translations/MAC fields are blank until
+an entry is bound; UNB original tuples remain available for diagnosis. Both
+RPC and UI fixtures cover the distinction, and image audits require the
+updated RPC and absence of the removed overclock method.
 
 CI executes the actual prepared C functions with register/MDIO fixtures,
 including every stock OPP, divider/bit preservation, out-of-range rejection
@@ -142,3 +178,31 @@ by this build task.
 References:
 - https://github.com/OpenWRT-fanboy/OpenW1700k/commit/9505125c96ef9b43f54ecb32bcbac5334a10f94a
 - https://github.com/mediatek/mtk-openwrt-feeds/blob/a7ace89b5c4d50ae2ef92690c32a0d37a65b6ca3/21.02/files/target/linux/mediatek/files-5.4/drivers/net/phy/air_en8811h_api.c
+
+## Candidate NPU RX ring backport (2026-11-03)
+
+The current device logged a warning in an NPU RX call path at boot. The
+stripped module attributed the PC to `mt7996_mac_wtbl_lmac_addr+0x614`, but
+disassembly places the warning in the following static TX-free parser's
+`cur_info >= end` check. This is consistent with a truncated/misframed event;
+it does not by itself prove which producer-side race generated that event.
+
+`121-npu-rx-ring.patch` backports the two changes from
+[mt76 PR #1169](https://github.com/openwrt/mt76/pull/1169), commits
+`105e1b13a25c874fd7d750d28cd06ab05a778921` and
+`99e66f2d6eadc5594956bc76f819c78f3794d4b8`. **The PR is unmerged as of
+2026-11-03.** These changes preserve NPU offload. Slots are returned to the
+device only after replacement buffers have been installed; dequeue waits for
+all queued slots of a frame. The first DONE read and DMA read barrier precede
+the slot-count read, and another DMA read barrier precedes payload metadata.
+Descriptor publication uses the existing regmap/MMIO publication path.
+
+CI compiles the actual fill/dequeue functions and descriptor declaration.
+The unpatched code must reproduce eight unsafe ownership/completion cases;
+the patched code must pass 12 fixtures covering delayed completion, count
+visibility, empty/short queues, wraparound, zero count, partial refill and
+buffer/skb allocation failures. Audits repeat the tests on the actual prepared
+mt76 source used for both images. Fixtures cannot establish physical DMA
+ordering or device stability: RAM boot and sustained bidirectional wireless
+load without new kernel warnings remain required before claiming this warning
+has been eliminated on the W1701K.

@@ -265,7 +265,7 @@ Do not duplicate the CPUFreq/PM-domain Kconfig definitions already in 6.18.
  }
  
  static int airoha_cpu_pmdomain_probe(struct platform_device *pdev)
-@@ -70,18 +247,51 @@
+@@ -70,18 +247,57 @@
  	const struct clk_init_data init = {
  		.name = "cpu",
  		.ops = &airoha_cpu_pmdomain_clk_ops,
@@ -314,12 +314,18 @@ Do not duplicate the CPUFreq/PM-domain Kconfig definitions already in 6.18.
 +	if (!priv->use_smc && (!freq_hz || freq_hz > 2000000000UL))
 +		return dev_err_probe(dev, -ENODEV,
 +				     "invalid CPU frequency: %lu Hz\n", freq_hz);
++	/* Report the real inherited clock; cpufreq-dt's initial-frequency check
++	 * moves an unlisted boot clock into the unchanged stock OPP table.
++	 */
++	if (!priv->use_smc && (freq_hz < 500000000UL || freq_hz > 1200000000UL))
++		dev_warn(dev, "unlisted initial CPU clock %lu MHz; CPUFreq will select a stock OPP\n",
++			 freq_hz / 1000000);
 +
 +	dev_info(dev, "CPU frequency: %lu MHz\n", freq_hz / 1000000);
  	ret = devm_clk_hw_register(dev, &priv->hw);
  	if (ret)
  		return ret;
-@@ -106,12 +316,10 @@
+@@ -106,12 +322,10 @@
  		goto err_add_provider;
  
  	platform_set_drvdata(pdev, priv);
