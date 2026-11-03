@@ -217,6 +217,11 @@ def check_root(root, full):
                   'lib/firmware/airoha/en7581_MT7996_npu_rv32.bin')
     for name in essentials:
         require(virtual(root, name).is_file(), f'missing runtime {name}')
+    require((root / 'www/luci-static/resources/view/network/wireless.js').is_file(),
+            'standard LuCI wireless management page missing')
+    for name in ('etc/init.d/npu-jitter', 'usr/libexec/npu-jitter-daemon',
+                 'usr/libexec/rpcd/luci.airoha_flowsense'):
+        require(not (root / name).exists(), f'excluded FlowSense runtime present: {name}')
     for directory, pattern in (('lib/firmware', 'mt7996_wm.bin'), ('lib/firmware', 'mt7996_wa.bin'),
                                ('lib/firmware', 'mt7996_dsp.bin'), ('lib/modules', 'mt7996e.ko*')):
         require(any((root / directory).rglob(pattern)), f'missing hardware file {pattern}')
@@ -283,6 +288,9 @@ def check_root(root, full):
             fields = dict(line.split(':', 1) for line in record.splitlines() if ':' in line)
             if 'P' in fields and 'V' in fields:
                 packages[fields['P']] = fields['V']
+    require(bool(packages), 'APK installed package database missing or empty')
+    for name in ('luci-app-airoha-flowsense', 'luci-app-mlo', 'luci-app-wifi7'):
+        require(name not in packages, f'excluded optional component present: {name}')
     return {'elf_files_checked': elf_count, 'kernel_modules': modules[0].name,
             'rootfs_dependencies': 'passed', 'package_versions': packages,
             'mihomo_runtime_version': '1.19.33' if full else 'not included'}

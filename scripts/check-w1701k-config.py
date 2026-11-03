@@ -9,6 +9,12 @@ required = [s for s in seed if s.startswith('CONFIG_PACKAGE_') and s.endswith('=
 missing = [s for s in required if s not in resolved]
 if missing:
     raise SystemExit('Required components were lost during dependency resolution:\n' + '\n'.join(missing))
+excluded = ('luci-app-airoha-flowsense', 'luci-app-mlo', 'luci-app-wifi7')
+for package in excluded:
+    if any(f'CONFIG_PACKAGE_{package}={state}' in resolved for state in ('y', 'm')):
+        raise SystemExit('Excluded optional component was selected: ' + package)
+if 'CONFIG_DRIVER_11BE_SUPPORT=y' not in resolved:
+    raise SystemExit('Wi-Fi 7 driver support must remain enabled')
 selected = sorted(s for s in resolved if s.startswith('CONFIG_TARGET_') and '_DEVICE_' in s and s.endswith('=y'))
 if selected != ['CONFIG_TARGET_airoha_an7581_DEVICE_gemtek_w1701k=y']:
     raise SystemExit('Unexpected device selection: ' + repr(selected))
@@ -21,3 +27,4 @@ for feature in ('CONFIG_NET_AIROHA=y', 'CONFIG_NET_AIROHA_NPU=y',
         raise SystemExit('Required built-in driver is missing: ' + feature)
 print(f'PASS: all {len(required)} requested package symbols survived defconfig; only W1701K is selected')
 print('PASS: Airoha Ethernet/NPU and MT7530/MMIO are built-in kernel drivers')
+print('PASS: optional FlowSense/MLO/WiFi7 apps excluded; Wi-Fi 7 driver support retained')

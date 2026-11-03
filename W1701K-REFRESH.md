@@ -4,6 +4,22 @@ Use **Build W1701K 6.18.60 GT Hybrid (Lite RAM + OpenClash Flash)** in GitHub Ac
 All firmware compilation and Linux patch preparation run on the Ubuntu Actions runner.
 The original 6.18.44 workflow and releases remain available.
 
+The next build is deferred and this workflow is manual-only (`workflow_dispatch`).
+CPUFreq/PHY telemetry patches below are retained for that build; they have not
+been boot-tested in a new kernel on the user's router.
+
+Both image configurations now exclude `luci-app-airoha-flowsense`,
+`luci-app-mlo` and `luci-app-wifi7`. FlowSense provides PPE/NPU monitoring and
+its npu-jitter background monitor; the other two packages provide additional
+wireless/MLO management pages. Their removal does not remove Airoha NPU/PPE,
+MT7996, EHT/802.11be or wpad support. Standard LuCI Network/Wireless, SoC Status,
+Fan Control and OpenClash (full BIN) remain. MLO driver capability remains;
+the dedicated MLO configuration pages are omitted. This is package selection,
+not a change to live radio configuration. Defconfig and actual-image audits
+reject reintroduction of the three apps and check the standard wireless page.
+FlowSense source is still imported for the shared compatibility patch but is
+not selected for installation.
+
 In the current source, Airoha Ethernet/NPU and MT7530/MMIO drivers are built
 into the kernel. Their old vendor kmod package names are no longer selected;
 the configuration and image audits require the corresponding kernel features.

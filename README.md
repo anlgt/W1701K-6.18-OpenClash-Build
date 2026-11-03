@@ -1,5 +1,10 @@
 # Gemtek W1701K 可复现固件构建
 
+> **当前 6.18.60 / 下次构建**：见 [6.18.60 构建说明](W1701K-REFRESH.md)。
+> 下次带上 CPUFreq 与 LAN/WAN PHY 温度修复，去掉 FlowSense、MLO、WiFi 7
+> 三个附加应用，保留 Wi-Fi 7 驱动、普通无线管理和 NPU/PPE。该工作流仅手动
+> 触发，目前不启动新构建；以下 6.18.44 章节描述保留的旧工作流。
+
 > Gemtek **W1700K** 用户：请使用 [W1700K U-Boot 私有固件说明](w1700k-private/README.md)。W1700K 和 W1701K 镜像不可混用。
 
 > 真机已验证的完整刷机、RAM 验收、LuCI 写入 OpenClash 完整版、

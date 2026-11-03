@@ -2,12 +2,6 @@ name: Build W1701K 6.18.60 GT Hybrid (Lite RAM + OpenClash Flash)
 
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths:
-      - 'patches/mt76/**'
-      - 'patches/kernel/**'
-      - 'patches/005-w1701k-status-telemetry.patch'
 
 permissions:
   contents: write
@@ -107,11 +101,11 @@ jobs:
         run: |
           git fetch --depth 1 origin "$APP_PACK_COMMIT"
           app_paths=(
+            # FlowSense source is needed by the shared compatibility patch;
+            # it is explicitly excluded from both firmware images.
             package/luci-app-airoha-flowsense
             package/luci-app-airoha-npu
             package/luci-app-w1700k-fancontrol
-            package/luci-app-mlo
-            package/luci-app-wifi7
           )
           git restore --source="$APP_PACK_COMMIT" --staged --worktree -- "${app_paths[@]}"
           grep -Fqx 'PKG_VERSION:=1.1.7' package/luci-app-airoha-flowsense/Makefile
@@ -269,7 +263,7 @@ jobs:
           cp .config ../"resolved-$CONFIG_SEED"
           python3 ../scripts/check-w1701k-config.py .config ../"$CONFIG_SEED"
 
-          required_packages='apk-openssl luci luci-app-package-manager luci-i18n-base-zh-cn luci-app-upnp luci-theme-argon luci-app-openclash luci-compat bash curl dnsmasq-full ip-full kmod-inet-diag kmod-nft-tproxy kmod-tun ruby ruby-yaml unzip irqbalance luci-app-irqbalance luci-app-airoha-npu luci-app-airoha-flowsense luci-app-w1700k-fancontrol luci-app-wifi7 luci-app-mlo airoha-en7581-mt7996-npu-firmware kmod-phy-airoha-en8811h airoha-en8811h-firmware kmod-hwmon-nct7802 kmod-mt7996e kmod-mt7996-firmware iw hostapd-utils wpad-openssl pciutils'
+          required_packages='apk-openssl luci luci-mod-network luci-app-package-manager luci-i18n-base-zh-cn luci-app-upnp luci-theme-argon luci-app-openclash luci-compat bash curl dnsmasq-full ip-full kmod-inet-diag kmod-nft-tproxy kmod-tun ruby ruby-yaml unzip irqbalance luci-app-irqbalance luci-app-airoha-npu luci-app-w1700k-fancontrol airoha-en7581-mt7996-npu-firmware kmod-phy-airoha-en8811h airoha-en8811h-firmware kmod-hwmon-nct7802 kmod-mt7996e kmod-mt7996-firmware iw hostapd-utils wpad-openssl pciutils'
           for package_name in $required_packages; do
             grep -Fqx "CONFIG_PACKAGE_${package_name}=y" .config || {
               echo "Required full-image package was not selected: $package_name"
@@ -319,7 +313,7 @@ jobs:
           test -n "$manifest" && test -s "$manifest"
           test -n "$sysupgrade" && test -s "$sysupgrade"
 
-          required_manifest='luci-app-openclash luci-compat bash curl dnsmasq-full kmod-inet-diag kmod-nft-tproxy kmod-tun ruby ruby-yaml unzip luci-app-upnp luci-theme-argon irqbalance luci-app-airoha-npu luci-app-airoha-flowsense luci-app-w1700k-fancontrol luci-app-wifi7 luci-app-mlo airoha-en7581-mt7996-npu-firmware kmod-phy-airoha-en8811h airoha-en8811h-firmware kmod-hwmon-nct7802 kmod-mt7996e kmod-mt7996-firmware wpad-openssl'
+          required_manifest='luci-mod-network luci-app-openclash luci-compat bash curl dnsmasq-full kmod-inet-diag kmod-nft-tproxy kmod-tun ruby ruby-yaml unzip luci-app-upnp luci-theme-argon irqbalance luci-app-airoha-npu luci-app-w1700k-fancontrol airoha-en7581-mt7996-npu-firmware kmod-phy-airoha-en8811h airoha-en8811h-firmware kmod-hwmon-nct7802 kmod-mt7996e kmod-mt7996-firmware wpad-openssl'
           for package_name in $required_manifest; do
             grep -q "^${package_name} - " "$manifest" || {
               echo "Required package missing from full image: $package_name"
@@ -357,7 +351,7 @@ jobs:
           cp .config ../"resolved-$CONFIG_SEED"
           python3 ../scripts/check-w1701k-config.py .config ../"$CONFIG_SEED"
 
-          required_packages='apk-openssl luci luci-app-package-manager luci-i18n-base-zh-cn luci-app-upnp luci-theme-argon curl dnsmasq ip-full kmod-inet-diag kmod-nft-tproxy kmod-tun irqbalance luci-app-irqbalance luci-app-airoha-npu luci-app-airoha-flowsense luci-app-w1700k-fancontrol luci-app-wifi7 luci-app-mlo airoha-en7581-mt7996-npu-firmware kmod-phy-airoha-en8811h airoha-en8811h-firmware kmod-hwmon-nct7802 kmod-mt7996e kmod-mt7996-firmware iw hostapd-utils wpad-openssl pciutils'
+          required_packages='apk-openssl luci luci-mod-network luci-app-package-manager luci-i18n-base-zh-cn luci-app-upnp luci-theme-argon curl dnsmasq ip-full kmod-inet-diag kmod-nft-tproxy kmod-tun irqbalance luci-app-irqbalance luci-app-airoha-npu luci-app-w1700k-fancontrol airoha-en7581-mt7996-npu-firmware kmod-phy-airoha-en8811h airoha-en8811h-firmware kmod-hwmon-nct7802 kmod-mt7996e kmod-mt7996-firmware iw hostapd-utils wpad-openssl pciutils'
           for package_name in $required_packages; do
             grep -Fqx "CONFIG_PACKAGE_${package_name}=y" .config || {
               echo "Required Lite RAM package was not selected: $package_name"
@@ -408,7 +402,7 @@ jobs:
           test -n "$initramfs" && test -s "$initramfs"
           test -n "$sysupgrade" && test -s "$sysupgrade"
 
-          required_manifest='curl dnsmasq kmod-inet-diag kmod-nft-tproxy kmod-tun irqbalance luci-app-airoha-npu luci-app-airoha-flowsense luci-app-w1700k-fancontrol luci-app-wifi7 luci-app-mlo airoha-en7581-mt7996-npu-firmware kmod-mt7996e kmod-mt7996-firmware wpad-openssl'
+          required_manifest='luci-mod-network curl dnsmasq kmod-inet-diag kmod-nft-tproxy kmod-tun irqbalance luci-app-airoha-npu luci-app-w1700k-fancontrol airoha-en7581-mt7996-npu-firmware kmod-mt7996e kmod-mt7996-firmware wpad-openssl'
           for package_name in $required_manifest; do
             grep -q "^${package_name} - " "$manifest" || {
               echo "Required package missing from Lite RAM image: $package_name"
@@ -502,7 +496,8 @@ jobs:
             '- `initramfs-uImage.itb` is the small Lite RAM-test image without OpenClash, Mihomo, Ruby or Bash.' \
             '- `squashfs-sysupgrade.bin` is the full flash image with OpenClash, its ARM64 Mihomo core and proxy dependencies.' \
             '- Both images are produced from the same pinned source and have an exactly matching kernel ABI and kernel-module selection.' \
-            '- Chinese LuCI, Argon, UPnP, irqbalance, SoC Status, FlowSense, Fan Control, Wi-Fi 7 and MLO remain in both images.' \
+            '- Both images retain Chinese LuCI, standard wireless management, Argon, UPnP, irqbalance, SoC Status and Fan Control.' \
+            '- FlowSense (including its npu-jitter monitor), MLO and WiFi7 apps are omitted; MT7996/EHT/Wi-Fi 7 and Airoha NPU/PPE driver support remain.' \
             '- This release intentionally publishes no APK files and no `packages.adb` repository.' \
             '- W1701K-only mt76 fix: inspect ADIE1 to identify the mixed iFEM/eFEM board and retain factory calibration.' \
             '- W1701K CPUFreq: retain ATF SMC where available; otherwise use a board-specific PLL fallback limited to stock 500-1200 MHz OPPs.' \
