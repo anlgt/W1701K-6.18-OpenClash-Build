@@ -29,6 +29,30 @@ rules:
 EOF
 qemu-aarch64 "$core" -t -d /tmp/mihomo-test -f /tmp/mihomo-test.yaml 2>&1 | tee output/build-record/mihomo-config-test.txt
 python3 w1700k-slim/verify_rootfs.py "$root" openwrt output/build-record/rootfs-validation.json
+# Verify the owner's exact external Node runtime against the new image's musl
+# and libgcc. This public download contains no Homebridge settings or tokens,
+# and is tested only; it is never injected into the firmware or artifact.
+curl -fL --retry 3 --retry-all-errors --max-time 300 \
+  https://unofficial-builds.nodejs.org/download/release/v24.21.0/node-v24.21.0-linux-arm64-musl.tar.gz \
+  -o /tmp/homebridge-node.tar.gz
+echo '3048b0811e158ca0d8672b59c839861763e144492980d8d29b369dfee45747e4  /tmp/homebridge-node.tar.gz' | sha256sum -c -
+mkdir -p /tmp/homebridge-node
+tar -xzf /tmp/homebridge-node.tar.gz -C /tmp/homebridge-node --strip-components=1 \
+  node-v24.21.0-linux-arm64-musl/bin/node
+echo 'fa2789559dbc3603794a229877c244d1c0d06625c124631611ca4e13eac765be  /tmp/homebridge-node/bin/node' | sha256sum -c -
+qemu-aarch64 -L "$root" /tmp/homebridge-node/bin/node --jitless -e '
+  const assert = require("node:assert/strict");
+  assert.equal(process.version, "v24.21.0");
+  assert.equal(process.arch, "arm64");
+  const crypto = require("node:crypto");
+  assert.equal(crypto.createHash("sha256").update("abc").digest("hex"),
+    "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+  require("node:tls").createSecureContext();
+  require("node:dgram"); require("node:dns"); require("node:fs");
+  console.log(JSON.stringify({status:"PASS", node:process.version,
+    arch:process.arch, openssl:process.versions.openssl,
+    scope:"Exact private runtime binary with new rootfs libraries; no Homebridge or appliance operation tested"}));
+' | tee output/build-record/homebridge-node-compatibility.json
 cp "$image" "$manifest" output/firmware/
 cp /tmp/w1700k-image-check/fit-validation.json /tmp/w1700k-image-check/device.dtb output/build-record/
 kernel_config=$(find openwrt/build_dir/target-aarch64_cortex-a53_musl/linux-airoha_an7581 -path '*/linux-6.18.60/.config' -print -quit)

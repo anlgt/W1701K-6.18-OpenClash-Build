@@ -73,6 +73,10 @@
   "hardware_validated": false,
   "optional_homebridge": {
     "included": false,
-    "reason": "Exact plugin/runtime unverified; selected feed Node is host-only. Separate postflash verification required."
+    "reason": "Restore exact private application backup separately; runtime is tested but not injected into public firmware.",
+    "node_version": "v24.21.0",
+    "node_url": "https://unofficial-builds.nodejs.org/download/release/v24.21.0/node-v24.21.0-linux-arm64-musl.tar.gz",
+    "node_archive_sha256": "3048b0811e158ca0d8672b59c839861763e144492980d8d29b369dfee45747e4",
+    "node_binary_sha256": "fa2789559dbc3603794a229877c244d1c0d06625c124631611ca4e13eac765be"
   }
 }
