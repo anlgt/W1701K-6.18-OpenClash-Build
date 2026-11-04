@@ -19,6 +19,7 @@ for block in (root/'lib/apk/db/installed').read_text().split('\n\n'):
         if len(line)>1 and line[1]==':' and line[0] in ('P','V','D'): fields[line[0]]=line[2:]
     if 'P' in fields: packages[fields['P']]=fields
 check_packages(set(packages))
+assert {'libc', 'libgcc1', 'procd', 'ca-bundle'} <= packages.keys(), 'Missing private Homebridge runtime dependency'
 assert packages['kernel']['V'].startswith('6.18.60~')
 assert packages['luci-app-openclash']['V'].split('-r', 1)[0] == '0.48.002', 'OpenClash version would regress'
 kernel=packages['kernel']['V']

@@ -24,6 +24,15 @@ class ConfigTests(unittest.TestCase):
         with self.assertRaises(AssertionError): check_config(self.seed.replace('CONFIG_PACKAGE_kmod-dsa-mt7530-mmio=y',''))
     def test_full_link_diagnostics_required(self):
         with self.assertRaises(AssertionError): check_packages(REQUIRED - {'ethtool-full'})
+    def test_ccache_parent_and_option_required(self):
+        for option in ('CONFIG_DEVEL=y', 'CONFIG_CCACHE=y'):
+            with self.subTest(option=option), self.assertRaisesRegex(AssertionError, 'CONFIG_'):
+                check_config(self.seed.replace(option, ''))
+    def test_excluded_legacy_audio_package_rejected(self):
+        for package in ('squeezelite-custom', 'squeezelite-full', 'squeezelite-dynamic'):
+            for mode in ('y', 'm'):
+                with self.subTest(package=package, mode=mode), self.assertRaisesRegex(AssertionError, 'recursive-Kconfig'):
+                    check_config(self.seed+f'\nCONFIG_PACKAGE_{package}={mode}\n')
     def test_frp_built_or_installed_rejected(self):
         for name in ('frp','frpc','frps','luci-app-frpc','luci-app-frps','luci-i18n-frpc-zh-cn','luci-i18n-frps-zh-cn'):
             for mode in ('y','m'):

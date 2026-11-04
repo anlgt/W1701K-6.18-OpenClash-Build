@@ -24,6 +24,7 @@ FORBIDDEN = set('''airoha-en7581-npu-firmware u-boot-an7581_gemtek_w1700k fastfe
 luci-app-wol luci-i18n-wol-zh-cn ttyd luci-app-ttyd nano luci-app-attendedsysupgrade attendedsysupgrade-common
 owut luci-app-airoha-flowsense luci-app-mlo luci-app-wifi7
 luci-theme-bootstrap luci-theme-footstrap luci-app-package-manager
+squeezelite-custom squeezelite-full squeezelite-dynamic
 relayd luci-proto-relay kmod-wireguard wireguard-tools luci-proto-wireguard'''.split())
 def frp(name):
     return bool(re.search(r'(^|-)frp[cs]?($|-)', name))
@@ -43,7 +44,8 @@ def check_config(content):
     assert devices == {'CONFIG_TARGET_airoha_an7581_DEVICE_gemtek_w1700k-ubi'}, devices
     assert values.get('CONFIG_TARGET_airoha') == values.get('CONFIG_TARGET_airoha_an7581') == 'y'
     assert values.get('CONFIG_TARGET_ROOTFS_SQUASHFS') == 'y'
-    assert values.get('CONFIG_CCACHE') == 'y'
+    assert values.get('CONFIG_DEVEL') == 'y', 'CONFIG_DEVEL=y is required to expose CCACHE to Kconfig'
+    assert values.get('CONFIG_CCACHE') == 'y', 'CONFIG_CCACHE=y was lost during configuration'
     assert values.get('CONFIG_TARGET_ROOTFS_INITRAMFS') != 'y'
     assert values.get('CONFIG_ALL_KMODS') != 'y'
     assert values.get('CONFIG_SIGNED_PACKAGES') == 'y'
@@ -51,6 +53,7 @@ def check_config(content):
     selected = {k[len('CONFIG_PACKAGE_'):] for k, v in values.items() if k.startswith('CONFIG_PACKAGE_') and v in ('y','m')}
     assert not selected.intersection({'airoha-en7581-npu-firmware','u-boot-an7581_gemtek_w1700k'}), 'Unneeded MT7992 firmware or bootloader target selected'
     assert not any(frp(p) for p in selected), 'FRP may not even be built as an optional module'
+    assert not any(p.startswith('squeezelite') for p in selected), 'Excluded recursive-Kconfig package selected'
     check_packages(packages)
 
 if __name__ == '__main__':

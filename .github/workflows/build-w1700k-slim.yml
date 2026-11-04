@@ -119,6 +119,7 @@ jobs:
           test "$(git -C feeds/luci rev-parse HEAD)" = "$LUCI_COMMIT"
           test "$(git -C feeds/routing rev-parse HEAD)" = "$ROUTING_COMMIT"
           ./scripts/feeds install -a
+          python3 ../w1700k-slim/prepare_feeds.py . --config ../w1700k-slim/w1700k-slim.config --apply
           clone_pinned() {
             git init "$3"
             git -C "$3" remote add origin "$1"
@@ -157,9 +158,12 @@ jobs:
           chmod 0755 openwrt/files/etc/uci-defaults/99-w1700k-slim
           chmod 0755 openwrt/files/usr/sbin/w1700k-health
           chmod 0755 openwrt/files/etc/uci-defaults/98-w1700k-slim-dns-migration
-          make -C openwrt defconfig
-          python3 w1700k-slim/verify_config.py openwrt/.config
+          make -C openwrt defconfig 2>&1 | tee openwrt/defconfig.log
           cp openwrt/.config output/build-record/resolved.config
+          if grep -E 'recursive dependency detected|(^|:)error:' openwrt/defconfig.log; then
+            echo 'Kconfig reported an error even if make returned success'; exit 1
+          fi
+          python3 w1700k-slim/verify_config.py openwrt/.config
           (cd openwrt && ./scripts/diffconfig.sh) > output/build-record/resolved.diffconfig
       - name: Strict source download gate
         working-directory: openwrt
