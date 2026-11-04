@@ -25,15 +25,15 @@ from pathlib import Path
 
 BOARD = 'gemtek,w1700k-ubi'
 PROFILE = 'gemtek_w1700k-ubi'
-KERNEL = '6.18.55'
-SOURCE_COMMIT = '15490b469f68133da3d244881fb48dd5e42c1d87'
+KERNEL = '6.18.60'
+SOURCE_COMMIT = 'd7643c564903fbf32506e836b96e7f86d42dc091'
 # image-commands.mk uses REVISION from getver.sh, not CONFIG_VERSION_CODE.
-# This exact shallow source checkout produces r0-15490b4. The full source SHA
+# This exact shallow source checkout produces r0-d7643c5. The full source SHA
 # must be verified independently by the build; the short revision is not proof.
-CANDIDATE_REVISION = 'r0-15490b4'
-REFERENCE_REVISION = 'r36860-15490b469f'
-REFERENCE_SHA256 = '6b63de6786f8e473a0b0277e3bc8348a5b0cebf7fca75faaf9c1768c813ed6d8'
-REFERENCE_BYTES = 22336319
+CANDIDATE_REVISION = 'r0-d7643c5'
+REFERENCE_REVISION = 'r38126-d7643c5649'
+REFERENCE_SHA256 = '7d4e60e5b6080c55a1d981b9a24b1ba8afcfe728302889be9fc5d616e9a8e414'
+REFERENCE_BYTES = 22467391
 MAX_IMAGE_BYTES = 0x1B700000
 MAX_KERNEL_BYTES = 128 * 1024 * 1024
 PARTITION_PARENT = '/soc/spi@1fa10000/nand@0/partitions'
@@ -262,7 +262,7 @@ def validate_metadata(metadata, mode):
     require(isinstance(version, dict), 'Missing metadata version object')
     require(version.get('target') == 'airoha/an7581', 'Wrong target')
     require(version.get('board') == PROFILE, 'Wrong metadata board')
-    expected = ('W1700K-Slim', '6.18.55-ubi2') if mode == 'candidate' else ('OpenWrt', 'ubi2')
+    expected = ('W1700K-Slim', '6.18.60-ubi2') if mode == 'candidate' else ('OpenWrt', 'ubi2')
     require((version.get('dist'), version.get('version')) == expected,
             'Wrong ' + mode + ' distribution/version')
     revision = CANDIDATE_REVISION if mode == 'candidate' else REFERENCE_REVISION

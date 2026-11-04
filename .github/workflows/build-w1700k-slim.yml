@@ -2,7 +2,7 @@ name: Build W1700K UBI2 Slim Candidate
 on:
   workflow_dispatch:
   push:
-    branches: [w1700k-slim-candidate-20261005]
+    branches: [w1700k-slim-audit-20261103]
     paths:
       - .github/workflows/build-w1700k-slim.yml
       - w1700k-slim/**
@@ -13,14 +13,15 @@ concurrency:
   cancel-in-progress: true
 env:
   SOURCE_URL: https://github.com/OpenWRT-fanboy/OpenW1700k.git
-  SOURCE_COMMIT: 15490b469f68133da3d244881fb48dd5e42c1d87
+  SOURCE_COMMIT: d7643c564903fbf32506e836b96e7f86d42dc091
   PACKAGES_COMMIT: 349c2ca5c8a058b30d42c537faa4c9e94e997106
   LUCI_COMMIT: aa3d48836e90ae0706c8d8f9b46b8371e45cfe1f
   ROUTING_COMMIT: 4b9891b9136259f93294a424507ed24c5e8c1cbd
-  OPENCLASH_COMMIT: c3a33c1d3407956fdf8f0e0b7c1a4c52e6ad9593
+  OPENCLASH_COMMIT: e553e82e01c697aefbe1555261a503f425e00ccd
   ARGON_COMMIT: 2a28799ca063aba7edc3314143b93c8325c86df4
-  MIHOMO_URL: https://github.com/MetaCubeX/mihomo/releases/download/v1.19.32/mihomo-linux-arm64-v1.19.32.gz
-  MIHOMO_SHA256: 9dd862e28b46ff7d775f169cceebc28deccaa0a9e804237d421cd2571e0caba0
+  MIHOMO_URL: https://github.com/MetaCubeX/mihomo/releases/download/v1.19.33/mihomo-linux-arm64-v1.19.33.gz
+  MIHOMO_SHA256: ba408b317080ee265c46cb923a50018c1b82cbd708551cdd46a1e3e307396187
+  CCACHE_MAXSIZE: 2G
   TZ: UTC
 jobs:
   build:
@@ -55,12 +56,24 @@ jobs:
           sparse-checkout: |
             /.github/workflows/build-w1700k-slim.yml
             /w1700k-slim/
+      - name: Choose bounded build parallelism
+        run: |
+          jobs=$(nproc)
+          memory_jobs=$(( $(awk '/MemTotal/ {print $2}' /proc/meminfo) / 2097152 ))
+          (( jobs <= 4 )) || jobs=4
+          (( jobs <= memory_jobs )) || jobs=$memory_jobs
+          (( jobs >= 1 )) || jobs=1
+          echo "BUILD_JOBS=$jobs" >> "$GITHUB_ENV"
+          echo "Build parallelism: $jobs; source checks and binary validation remain required."
       - name: Validate candidate definitions
         run: |
           python3 -m py_compile w1700k-slim/*.py
           python3 -m unittest discover -s w1700k-slim -p 'test_*.py' -v
           python3 w1700k-slim/verify_config.py w1700k-slim/w1700k-slim.config
           sh -n w1700k-slim/files/etc/uci-defaults/99-w1700k-slim
+          sh -n w1700k-slim/files/usr/sbin/w1700k-health
+          sh -n w1700k-slim/files/etc/uci-defaults/98-w1700k-slim-dns-migration
+          bash w1700k-slim/tests/test_dns_migration.sh w1700k-slim/files/etc/uci-defaults/98-w1700k-slim-dns-migration
           bash -n w1700k-slim/package_output.sh
       - name: Fetch exact W1700K source and guarded changes
         run: |
@@ -85,6 +98,15 @@ jobs:
             package/network/config/wifi-scripts package/base-files/files/etc/shadow
           mkdir -p output/build-record
           git -C openwrt diff --binary > output/build-record/source-changes.patch
+      - name: Restore verified source downloads and compiler cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: |
+            openwrt/dl
+            openwrt/.ccache
+          key: w1700k-slim-v1-${{ runner.os }}-${{ env.SOURCE_COMMIT }}-${{ hashFiles('w1700k-slim/sources.lock.json', 'w1700k-slim/w1700k-slim.config') }}
+          restore-keys: |
+            w1700k-slim-v1-${{ runner.os }}-${{ env.SOURCE_COMMIT }}-
       - name: Pin feeds and requested applications
         working-directory: openwrt
         run: |
@@ -112,7 +134,7 @@ jobs:
           done
           clone_pinned https://github.com/vernesong/OpenClash.git "$OPENCLASH_COMMIT" package/OpenClash
           clone_pinned https://github.com/jerrykuku/luci-theme-argon.git "$ARGON_COMMIT" package/extra/luci-theme-argon
-          grep -Fqx 'PKG_VERSION:=0.47.156' package/OpenClash/luci-app-openclash/Makefile
+          grep -Fqx 'PKG_VERSION:=0.48.002' package/OpenClash/luci-app-openclash/Makefile
           python3 - <<'PY'
           from pathlib import Path
           p=Path('package/OpenClash/luci-app-openclash/Makefile')
@@ -133,6 +155,8 @@ jobs:
           install -d openwrt/files
           cp -a w1700k-slim/files/. openwrt/files/
           chmod 0755 openwrt/files/etc/uci-defaults/99-w1700k-slim
+          chmod 0755 openwrt/files/usr/sbin/w1700k-health
+          chmod 0755 openwrt/files/etc/uci-defaults/98-w1700k-slim-dns-migration
           make -C openwrt defconfig
           python3 w1700k-slim/verify_config.py openwrt/.config
           cp openwrt/.config output/build-record/resolved.config
@@ -141,11 +165,11 @@ jobs:
         working-directory: openwrt
         run: |
           make download -j4 V=s 2>&1 | tee download.log || make download -j1 V=s 2>&1 | tee download-retry.log
-          echo 'f410638061a165c12f42ab871d2f3fcd525515359b5faeee80969cff84524df9  dl/linux-6.18.55.tar.xz' | sha256sum -c -
+          echo '3c2f44ef6acc021a7ad444d9a2e6ec1ef488ff09368793d0004a6080f69d621e  dl/linux-6.18.60.tar.xz' | sha256sum -c -
       - name: Native kernel and wireless patch preflight
         working-directory: openwrt
         run: |
-          make -j2 tools/install 2>&1 | tee tools.log
+          make -j"$BUILD_JOBS" tools/install 2>&1 | tee tools.log
           make -j1 target/linux/prepare V=s 2>&1 | tee kernel-prepare.log
           make -j1 package/kernel/mac80211/prepare V=s 2>&1 | tee mac80211-prepare.log
           make -j1 package/kernel/mt76/prepare V=s 2>&1 | tee mt76-prepare.log
@@ -157,13 +181,13 @@ jobs:
         id: compile
         working-directory: openwrt
         run: |
-          make -j2 world 2>&1 | tee build.log || make -j1 world V=s 2>&1 | tee build-retry.log
+          make -j"$BUILD_JOBS" world 2>&1 | tee build.log || make -j1 world V=s 2>&1 | tee build-retry.log
       - name: Validate actual firmware and rootfs
         run: bash w1700k-slim/package_output.sh
       - name: Upload validated software candidate and evidence
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: W1700K-Slim-6.18.55-candidate-${{ github.run_id }}-${{ github.run_attempt }}
+          name: W1700K-Slim-6.18.60-candidate-${{ github.run_id }}-${{ github.run_attempt }}
           path: output/
           retention-days: 30
           compression-level: 0

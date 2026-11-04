@@ -14,7 +14,7 @@ if not __debug__:
     raise RuntimeError('This gate must run without Python optimization')
 
 
-PIN = '15490b469f68133da3d244881fb48dd5e42c1d87'
+PIN = 'd7643c564903fbf32506e836b96e7f86d42dc091'
 
 def plan(root):
     head = subprocess.check_output(['git','-C',str(root),'rev-parse','HEAD'],text=True).strip()
@@ -55,8 +55,8 @@ def plan(root):
     replace(fan_paths[2], '\t\thwmon=$(find_nct7802)\n', '\t\thwmon=$(find_nct7802) || return 1\n')
     replace(fan_paths[1], '\tcall)\n',
         '\tcall)\n\t\t[ -n "$HWMON" ] && [ -d "$HWMON" ] || { printf \'%s\\n\' \'{"error":"NCT7802 controller unavailable"}\'; exit 1; }\n')
-    assert 'LINUX_VERSION-6.18 = .55' in (root/'target/linux/generic/kernel-6.18').read_text()
-    assert '01367e60db433534ad0aa3d3b6c886de8cb7d44c' in (root/'package/kernel/mt76/Makefile').read_text()
+    assert 'LINUX_VERSION-6.18 = .60' in (root/'target/linux/generic/kernel-6.18').read_text()
+    assert '0936617dc529ff9da0385221d3fa6de732231177' in (root/'package/kernel/mt76/Makefile').read_text()
     assert not (root/'files/etc/vermagic.txt').exists(), 'Unapproved ABI override overlay'
     return changes
 

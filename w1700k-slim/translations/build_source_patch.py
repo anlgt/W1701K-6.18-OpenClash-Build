@@ -84,7 +84,7 @@ replace(FAN_SETTINGS, "ctx.fillText('PWM (0-255)',", "ctx.fillText(_('PWM (0-255
 replace(FAN_SETTINGS, "ctx.fillText(preset.charAt(0).toUpperCase() + preset.slice(1),", "ctx.fillText(presetLabel(preset),")
 
 patch = ''.join(''.join(difflib.unified_diff(originals[name].splitlines(keepends=True), modified[name].splitlines(keepends=True), fromfile='a/'+name, tofile='b/'+name)) for name in originals)
-(ROOT / 'source-localization.patch').write_text(patch, encoding='utf-8')
+(ROOT / 'source-localization.patch').write_text(patch, encoding='utf-8', newline='\n')
 commit = subprocess.check_output(['git', '-C', str(SOURCE), 'rev-parse', 'HEAD'], text=True).strip()
 manifest = ['Pinned source assumptions for source-localization.patch', 'Source commit: ' + commit, '']
 for name, content in originals.items():

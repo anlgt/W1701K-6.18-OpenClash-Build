@@ -15,13 +15,15 @@ class ConfigTests(unittest.TestCase):
             for mode in ('y','m'):
                 with self.assertRaises(AssertionError): check_config(self.seed+f'\nCONFIG_PACKAGE_{name}={mode}\n')
     def test_wrong_version_rejected(self):
-        with self.assertRaises(AssertionError): check_config(self.seed.replace('6.18.55-ubi2','SNAPSHOT'))
+        with self.assertRaises(AssertionError): check_config(self.seed.replace('6.18.60-ubi2','SNAPSHOT'))
     def test_wrong_board_rejected(self):
         with self.assertRaises(AssertionError): check_config(self.seed.replace('DEVICE_gemtek_w1700k-ubi','DEVICE_gemtek_xr1710g-ubi'))
     def test_second_board_rejected(self):
         with self.assertRaises(AssertionError): check_config(self.seed+'\nCONFIG_TARGET_airoha_an7581_DEVICE_gemtek_xr1710g-ubi=y\n')
     def test_missing_wired_module_rejected(self):
         with self.assertRaises(AssertionError): check_config(self.seed.replace('CONFIG_PACKAGE_kmod-dsa-mt7530-mmio=y',''))
+    def test_full_link_diagnostics_required(self):
+        with self.assertRaises(AssertionError): check_packages(REQUIRED - {'ethtool-full'})
     def test_frp_built_or_installed_rejected(self):
         for name in ('frp','frpc','frps','luci-app-frpc','luci-app-frps','luci-i18n-frpc-zh-cn','luci-i18n-frps-zh-cn'):
             for mode in ('y','m'):

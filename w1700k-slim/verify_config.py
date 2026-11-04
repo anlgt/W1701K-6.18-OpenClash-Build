@@ -14,7 +14,7 @@ kmod-phy-realtek rtl826x-firmware rtl8261c-firmware kmod-hwmon-nct7802
 airoha-en7581-mt7996-npu-firmware kmod-mt7996e kmod-mt7996-firmware
 wireless-regdb wpad-openssl firewall4 kmod-nft-bridge kmod-nft-offload
 luci-base luci-app-firewall luci-app-openclash luci-theme-argon
-luci-app-upnp miniupnpd-nftables coreutils-nohup etherwake irqbalance
+luci-app-upnp miniupnpd-nftables coreutils-nohup ethtool-full etherwake irqbalance
 luci-app-irqbalance luci-app-filemanager luci-app-airoha-npu
 luci-app-w1700k-fancontrol kmod-inet-diag kmod-nft-tproxy kmod-tun
 dnsmasq-full ruby-yaml luci-i18n-base-zh-cn luci-i18n-firewall-zh-cn
@@ -36,13 +36,14 @@ def check_packages(packages):
 
 def check_config(content):
     values = dict(re.findall(r'^(CONFIG_[^=\s]+)=(.*)$', content, re.M))
-    version = {'CONFIG_IMAGEOPT': 'y', 'CONFIG_VERSIONOPT': 'y', 'CONFIG_VERSION_DIST': '"W1700K-Slim"', 'CONFIG_VERSION_NUMBER': '"6.18.55-ubi2"', 'CONFIG_VERSION_CODE': '"r36860-15490b469f"'}
+    version = {'CONFIG_IMAGEOPT': 'y', 'CONFIG_VERSIONOPT': 'y', 'CONFIG_VERSION_DIST': '"W1700K-Slim"', 'CONFIG_VERSION_NUMBER': '"6.18.60-ubi2"', 'CONFIG_VERSION_CODE': '"r38126-d7643c5649"'}
     for key, expected in version.items():
         assert values.get(key) == expected, f'Incorrect resolved version option: {key}'
     devices = {k for k, v in values.items() if '_DEVICE_' in k and v == 'y'}
     assert devices == {'CONFIG_TARGET_airoha_an7581_DEVICE_gemtek_w1700k-ubi'}, devices
     assert values.get('CONFIG_TARGET_airoha') == values.get('CONFIG_TARGET_airoha_an7581') == 'y'
     assert values.get('CONFIG_TARGET_ROOTFS_SQUASHFS') == 'y'
+    assert values.get('CONFIG_CCACHE') == 'y'
     assert values.get('CONFIG_TARGET_ROOTFS_INITRAMFS') != 'y'
     assert values.get('CONFIG_ALL_KMODS') != 'y'
     assert values.get('CONFIG_SIGNED_PACKAGES') == 'y'

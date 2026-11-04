@@ -1,18 +1,20 @@
 {
-  "status": "Candidate branch/build authorized; image and hardware validation pending",
-  "checked_utc": "2026-10-05T08:42:00Z",
+  "status": "Runtime-audit rebuild candidate; offline build and new-image hardware validation pending",
+  "checked_utc": "2026-11-04T05:30:00Z",
   "source": {
     "url": "https://github.com/OpenWRT-fanboy/OpenW1700k.git",
     "ref": "ubi2",
-    "commit": "15490b469f68133da3d244881fb48dd5e42c1d87"
+    "commit": "d7643c564903fbf32506e836b96e7f86d42dc091"
   },
   "profile": {
     "target": "airoha/an7581",
     "device": "gemtek_w1700k-ubi",
     "board": "gemtek,w1700k-ubi",
     "compat_version": "2.0",
-    "kernel": "6.18.55",
-    "kernel_sha256": "f410638061a165c12f42ab871d2f3fcd525515359b5faeee80969cff84524df9"
+    "kernel": "6.18.60",
+    "kernel_sha256": "3c2f44ef6acc021a7ad444d9a2e6ec1ef488ff09368793d0004a6080f69d621e",
+    "source_revision": "r38126-d7643c5649",
+    "shallow_metadata_revision": "r0-d7643c5"
   },
   "feeds": [
     {
@@ -39,8 +41,8 @@
   ],
   "plugins": {
     "openclash": {
-      "version": "0.47.156",
-      "commit": "c3a33c1d3407956fdf8f0e0b7c1a4c52e6ad9593"
+      "version": "0.48.002",
+      "commit": "e553e82e01c697aefbe1555261a503f425e00ccd"
     },
     "argon": {
       "tag": "v2.4.7",
@@ -48,24 +50,25 @@
       "source_makefile_version": "2.4.6-r20260731"
     },
     "mihomo": {
-      "version": "v1.19.32",
-      "commit": "88dcbf7f1614a67c3b36b848ee3592dfa92ada36",
-      "status": "candidate update, integration not yet tested",
-      "url": "https://github.com/MetaCubeX/mihomo/releases/download/v1.19.32/mihomo-linux-arm64-v1.19.32.gz",
-      "gzip_sha256": "9dd862e28b46ff7d775f169cceebc28deccaa0a9e804237d421cd2571e0caba0"
+      "version": "v1.19.33",
+      "commit": "3f27ef39f8c96bbfbc8b0b9bb10f5c9ef60149d8",
+      "status": "Matches runtime-audited stable version; candidate integration must pass byte equality and QEMU gates",
+      "url": "https://github.com/MetaCubeX/mihomo/releases/download/v1.19.33/mihomo-linux-arm64-v1.19.33.gz",
+      "gzip_sha256": "ba408b317080ee265c46cb923a50018c1b82cbd708551cdd46a1e3e307396187"
     }
   },
   "mt76": {
-    "url": "https://github.com/OpenWRT-fanboy/mt76-firmware",
-    "commit": "01367e60db433534ad0aa3d3b6c886de8cb7d44c",
-    "note": "retain native fork and all native patches; do not replace with XR stack"
+    "url": "https://github.com/openwrt/mt76",
+    "commit": "0936617dc529ff9da0385221d3fa6de732231177",
+    "note": "Use the pinned ubi2 source's native mt76 recipe and patches; no XR stack replacement",
+    "source_date": "2026-10-28"
   },
   "reference": {
-    "url": "https://github.com/w1700k/builds/releases/tag/ubi2_2026.10.05_r36860-15490b469f",
-    "build_recipe_commit": "7b2369becbea60d85491ac121ac9db477b07d05f",
-    "sha256": "6b63de6786f8e473a0b0277e3bc8348a5b0cebf7fca75faaf9c1768c813ed6d8",
-    "bytes": 22336319,
-    "packages": 203
+    "url": "https://github.com/w1700k/builds/releases/tag/ubi2_2026.11.04_r38126-d7643c5649",
+    "source_commit": "d7643c564903fbf32506e836b96e7f86d42dc091",
+    "sha256": "7d4e60e5b6080c55a1d981b9a24b1ba8afcfe728302889be9fc5d616e9a8e414",
+    "bytes": 22467391,
+    "verification": "Release asset identity recorded; reference image content not yet locally validated"
   },
   "hardware_validated": false,
   "optional_homebridge": {

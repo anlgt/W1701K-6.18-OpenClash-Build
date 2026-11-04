@@ -135,11 +135,11 @@ def metadata(mode='candidate'):
             'new_supported_devices': [gate.BOARD], 'supported_devices': [gate.LEGACY_SUPPORTED],
             'version': {'target': 'airoha/an7581', 'board': gate.PROFILE,
                         'dist': 'W1700K-Slim' if mode == 'candidate' else 'OpenWrt',
-                        'version': '6.18.55-ubi2' if mode == 'candidate' else 'ubi2',
-                        'revision': 'r0-15490b4' if mode == 'candidate' else 'r36860-15490b469f'}}
+                        'version': '6.18.60-ubi2' if mode == 'candidate' else 'ubi2',
+                        'revision': 'r0-d7643c5' if mode == 'candidate' else 'r38126-d7643c5649'}}
 
 
-def kernel(version='6.18.55'):
+def kernel(version='6.18.60'):
     data = bytearray(64)
     data[56:60] = b'ARMd'
     data.extend(b'\0Linux version ' + version.encode() + b' (synthetic@test)\n\0')
@@ -206,7 +206,7 @@ class ArtifactTests(unittest.TestCase):
     def test_valid_candidate(self):
         result = self.validate(fixture())
         self.assertEqual(result['status'], 'PASS')
-        self.assertEqual(result['kernel']['version'], '6.18.55')
+        self.assertEqual(result['kernel']['version'], '6.18.60')
         self.assertEqual(len(result['device_tree']['partitions']), 4)
         self.assertIn('NOT RUN', result['hardware_validation'])
 
@@ -216,8 +216,8 @@ class ArtifactTests(unittest.TestCase):
             gate.validate_metadata(metadata(), 'reference')
 
     def test_candidate_revision_is_one_exact_shallow_checkout_value(self):
-        for revision in ['r36860-15490b469f', 'r0-15490b5', 'r0-15490b469f',
-                         'r1-15490b4', 'r0-15490b4-dirty', '', None]:
+        for revision in ['r38126-d7643c5649', 'r0-15490b5', 'r0-d7643c569f',
+                         'r1-15490b4', 'r0-d7643c5-dirty', '', None]:
             meta = metadata()
             meta['version']['revision'] = revision
             with self.subTest(revision=revision), self.assertRaisesRegex(
@@ -225,7 +225,7 @@ class ArtifactTests(unittest.TestCase):
                 self.validate(fixture(meta=meta), meta)
 
     def test_reference_revision_remains_exact(self):
-        for revision in ['r0-15490b4', 'r36860-15490b469e', 'r36860-15490b4', '', None]:
+        for revision in ['r0-d7643c5', 'r36860-15490b469e', 'r36860-15490b4', '', None]:
             meta = metadata('reference')
             meta['version']['revision'] = revision
             with self.subTest(revision=revision), self.assertRaisesRegex(
@@ -235,8 +235,8 @@ class ArtifactTests(unittest.TestCase):
     def test_full_source_commit_requires_external_build_provenance(self):
         provenance = self.validate(fixture())['source_provenance_requirement']
         self.assertEqual(provenance['required_full_source_commit'],
-                         '15490b469f68133da3d244881fb48dd5e42c1d87')
-        self.assertEqual(provenance['metadata_revision'], 'r0-15490b4')
+                         'd7643c564903fbf32506e836b96e7f86d42dc091')
+        self.assertEqual(provenance['metadata_revision'], 'r0-d7643c5')
         self.assertIn('git rev-parse HEAD', provenance['required_evidence'])
         self.assertIn('NOT VERIFIED FROM ARTIFACT', provenance['artifact_verification'])
 
@@ -411,8 +411,8 @@ class ArtifactTests(unittest.TestCase):
                         'sha1 payload hash mismatch')
 
     def test_kernel_version_exact_and_gzip_arm64(self):
-        for payload in [kernel('6.18.550'), kernel('6.18.52'), b'invalid', kernel()[:-1],
-                        kernel() + gzip.compress(b'extra'), gzip.compress(b'Linux version 6.18.55\n')]:
+        for payload in [kernel('6.18.600'), kernel('6.18.52'), b'invalid', kernel()[:-1],
+                        kernel() + gzip.compress(b'extra'), gzip.compress(b'Linux version 6.18.60\n')]:
             with self.subTest(bytes=len(payload)), self.assertRaises(gate.ValidationError):
                 self.validate(fixture(kernel_payload=payload))
 

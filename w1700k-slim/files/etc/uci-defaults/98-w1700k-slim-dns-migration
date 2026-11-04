@@ -1,0 +1,27 @@
+#!/bin/sh
+# 2026-11-03 audit: dnsmasq rejected Mihomo's fdfe:dcba:9876::/64
+# fake AAAA answers as DNS rebinding (AAAA was present on :7874, absent
+# on :53). OpenClash 0.48.002 uses fakeip_range6 for YAML, nft rules,
+# and IPv6 policy routing; its init script already uses 2001:2::1/64
+# as the fallback range. IANA reserves 2001:2::/48 for benchmarking.
+# Migrate only the exact observed conflict; preserve DNS rebinding
+# protection, native IPv6, other boards, and user-selected ranges.
+
+board="$(cat /tmp/sysinfo/board_name 2>/dev/null)" || exit 1
+[ "$board" = 'gemtek,w1700k-ubi' ] || exit 0
+command -v uci >/dev/null 2>&1 || exit 1
+[ "$(uci -q get 'dhcp.@dnsmasq[0].rebind_protection')" = '1' ] || exit 0
+[ "$(uci -q get openclash.config.operation_mode)" = 'fake-ip' ] || exit 0
+[ "$(uci -q get openclash.config.ipv6_enable)" = '1' ] || exit 0
+[ "$(uci -q get openclash.config.ipv6_dns)" = '1' ] || exit 0
+[ "$(uci -q get openclash.config.fakeip_range6)" = 'fdfe:dcba:9876::1/64' ] || exit 0
+
+uci -q set 'openclash.config.fakeip_range6=2001:2::1/64' || exit 1
+if ! uci -q commit openclash; then
+    # Keep a failed migration retryable; do not leave a staged new value
+    # that would make the next run incorrectly skip the migration.
+    uci -q revert openclash.config.fakeip_range6
+    exit 1
+fi
+logger -t w1700k-dns-migration 'Moved OpenClash fake IPv6 to benchmark range; DNS rebinding protection and IPv6 remain enabled.'
+exit 0

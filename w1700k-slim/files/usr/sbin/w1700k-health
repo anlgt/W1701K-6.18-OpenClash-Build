@@ -1,0 +1,142 @@
+#!/bin/sh
+# One-shot, read-only diagnostics. Never emit addresses, SSIDs or configuration.
+
+export LC_ALL=C
+
+case "${1:-}" in
+	'') ;;
+	-h|--help)
+		printf '%s\n' 'Usage: w1700k-health' 'Print a single read-only health snapshot; no background monitoring or changes.'
+		exit 0 ;;
+	*) printf '%s\n' 'Usage: w1700k-health' >&2; exit 2 ;;
+esac
+
+read_uint() {
+	local value
+	value=$(cat "$1" 2>/dev/null) || value=
+	case "$value" in
+		''|*[!0-9]*) printf '%s' 'unavailable' ;;
+		*) printf '%s' "$value" ;;
+	esac
+}
+
+process_status() {
+	local label="$1" name
+	shift
+	for name in "$@"; do
+		if pidof "$name" >/dev/null 2>&1; then
+			printf '%s=running\n' "$label"
+			return
+		fi
+	done
+	printf '%s=not_running\n' "$label"
+}
+
+printf '%s\n' 'W1700K health snapshot (read-only)'
+printf 'kernel=%s\n' "$(uname -r)"
+awk '{printf "uptime_seconds=%.0f\n", $1}' /proc/uptime
+awk '{printf "load_average=%s %s %s\n", $1, $2, $3}' /proc/loadavg
+
+printf '\n%s\n' '[memory]'
+awk '/^(MemTotal|MemAvailable|MemFree|Buffers|Cached|SwapTotal|SwapFree):/ {print}' /proc/meminfo
+
+printf '\n%s\n' '[storage_kib]'
+df -Pk / /rom /overlay /tmp 2>/dev/null
+
+printf '\n%s\n' '[processes]'
+printf '%s\n' '# not_running may mean disabled or not installed; this is not a functional service test.'
+process_status netifd netifd
+process_status dnsmasq dnsmasq
+process_status odhcpd odhcpd
+process_status rpcd rpcd
+process_status uhttpd uhttpd
+process_status ssh dropbear sshd
+process_status cron crond
+process_status irqbalance irqbalance
+process_status upnp miniupnpd
+process_status openclash_core clash_meta mihomo clash
+
+printf '\n%s\n' '[interfaces]'
+printf '%s\n' '# Counters are cumulative; reported drops alone do not prove end-to-end packet loss.'
+for netpath in /sys/class/net/*; do
+	[ -d "$netpath" ] || continue
+	iface=${netpath##*/}
+	state=$(cat "$netpath/operstate" 2>/dev/null)
+	case "$state" in up|down|unknown|dormant|notpresent|lowerlayerdown|testing) ;; *) state=unavailable ;; esac
+	printf '%s state=%s carrier=%s' "$iface" "$state" "$(read_uint "$netpath/carrier")"
+	printf ' speed_mbps=%s\n' "$(read_uint "$netpath/speed")"
+	for counter in rx_packets rx_errors rx_dropped tx_packets tx_errors tx_dropped; do
+		printf '  %s=%s\n' "$counter" "$(read_uint "$netpath/statistics/$counter")"
+	done
+	printf '  carrier_changes=%s\n' "$(read_uint "$netpath/carrier_changes")"
+done
+
+printf '\n%s\n' '[ethernet_driver_statistics]'
+if command -v ethtool >/dev/null 2>&1; then
+	for iface in wan lan2 lan3 lan4 eth0; do
+		[ -d "/sys/class/net/$iface" ] || continue
+		printf '%s\n' "$iface"
+		ethtool -i "$iface" 2>/dev/null |
+			awk '/^(driver|version|firmware-version):/ {print "  " $0}'
+		ethtool -S "$iface" 2>/dev/null | awk -F: '
+			$1 ~ /^[ \t]*[A-Za-z0-9_ .()-]+$/ &&
+			$1 ~ /(drop|err|miss|fault|overflow|collision|pause|crc|fcs|discard)/ &&
+			$2 ~ /^[ \t]*[0-9]+[ \t]*$/ {
+				gsub(/^[ \t]+|[ \t]+$/, "", $1);
+				gsub(/^[ \t]+|[ \t]+$/, "", $2);
+				printf "  %s=%s\n", $1, $2
+			}'
+	done
+else
+	printf '%s\n' 'ethtool=not_installed (sysfs counters above remain available)'
+fi
+
+printf '\n%s\n' '[thermal_zones]'
+for zone in /sys/class/thermal/thermal_zone*; do
+	[ -r "$zone/temp" ] || continue
+	value=$(cat "$zone/temp" 2>/dev/null)
+	printf '%s ' "${zone##*/}"
+	printf '%s\n' "$value" | awk '
+		/^-?[0-9]+$/ {printf "temperature_c=%.3f\n", $1 / 1000; valid=1}
+		END {if (!valid) print "temperature=unavailable (read error)"}'
+done
+
+printf '\n%s\n' '[hwmon]'
+for hwmon in /sys/class/hwmon/hwmon*; do
+	[ -d "$hwmon" ] || continue
+	name=$(cat "$hwmon/name" 2>/dev/null)
+	case "$name" in ''|*[!A-Za-z0-9_.:-]*) name=unknown ;; esac
+	printf '%s name=%s\n' "${hwmon##*/}" "$name"
+	for input in "$hwmon"/temp*_input "$hwmon"/fan*_input; do
+		[ -f "$input" ] || continue
+		sensor=${input##*/}
+		sensor=${sensor%_input}
+		if [ -e "$hwmon/${sensor}_fault" ]; then
+			fault=$(read_uint "$hwmon/${sensor}_fault")
+			if [ "$fault" != 0 ]; then
+				printf '  %s=unavailable (sensor_fault=%s)\n' "$sensor" "$fault"
+				continue
+			fi
+		fi
+		value=$(cat "$input" 2>/dev/null)
+		printf '%s\n' "$value" | awk -v sensor="$sensor" '
+			/^-?[0-9]+$/ {
+				if (sensor ~ /^temp/) printf "  %s_c=%.3f\n", sensor, $1 / 1000;
+				else printf "  %s_rpm=%d\n", sensor, $1;
+				valid=1
+			}
+			END {if (!valid) printf "  %s=unavailable (read error)\n", sensor}'
+	done
+	if [ -r "$hwmon/pwm1" ]; then
+		printf '  pwm1=%s mode=%s\n' "$(read_uint "$hwmon/pwm1")" "$(read_uint "$hwmon/pwm1_enable")"
+	fi
+done
+
+printf '\n%s\n' '[cpu_frequency_khz]'
+for policy in /sys/devices/system/cpu/cpufreq/policy*; do
+	[ -d "$policy" ] || continue
+	printf '%s current=%s min=%s max=%s\n' "${policy##*/}" \
+		"$(read_uint "$policy/scaling_cur_freq")" \
+		"$(read_uint "$policy/scaling_min_freq")" \
+		"$(read_uint "$policy/scaling_max_freq")"
+done

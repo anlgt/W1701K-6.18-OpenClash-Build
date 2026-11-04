@@ -19,7 +19,8 @@ for block in (root/'lib/apk/db/installed').read_text().split('\n\n'):
         if len(line)>1 and line[1]==':' and line[0] in ('P','V','D'): fields[line[0]]=line[2:]
     if 'P' in fields: packages[fields['P']]=fields
 check_packages(set(packages))
-assert packages['kernel']['V'].startswith('6.18.55~')
+assert packages['kernel']['V'].startswith('6.18.60~')
+assert packages['luci-app-openclash']['V'].split('-r', 1)[0] == '0.48.002', 'OpenClash version would regress'
 kernel=packages['kernel']['V']
 kernel_base=kernel.rsplit('-r',1)[0]
 for name, fields in packages.items():
@@ -29,8 +30,13 @@ for name, fields in packages.items():
 required_files=['www/luci-static/resources/view/airoha_npu/status.js',
     'www/luci-static/resources/view/fan/status.js', 'usr/libexec/rpcd/luci.airoha_npu',
     'usr/libexec/rpcd/luci.fan', 'etc/init.d/fan', 'etc/init.d/airoha_fan',
-    'etc/openclash/core/clash_meta','etc/uci-defaults/99-w1700k-slim']
+    'etc/openclash/core/clash_meta','etc/uci-defaults/99-w1700k-slim', 'usr/sbin/ethtool',
+    'etc/uci-defaults/98-w1700k-slim-dns-migration', 'usr/sbin/w1700k-health']
 for path in required_files: assert (root/path).is_file(), path
+overlay = Path(__file__).resolve().parent / 'files'
+for path in ('usr/sbin/w1700k-health', 'etc/uci-defaults/98-w1700k-slim-dns-migration'):
+    assert (root/path).read_bytes() == (overlay/path).read_bytes(), path
+    assert (root/path).stat().st_mode & 0o111, f'Not executable: {path}'
 assert 'setOverclock' in (root/'usr/libexec/rpcd/luci.airoha_npu').read_text()
 assert 'setOverclock' in (root/'www/luci-static/resources/view/airoha_npu/status.js').read_text()
 assert not (root/'etc/vermagic.txt').exists(), 'Injected external ABI value'
@@ -53,6 +59,7 @@ for path, src in [
 upnp=(root/'etc/config/upnpd').read_text()
 assert re.search(r"option\s+enabled\s+['\"]?0['\"]?",upnp), 'UPnP unexpectedly enabled by default'
 report={'packages':len(packages),'kernel':kernel,'required_files':required_files,
+        'openclash_version':packages['luci-app-openclash']['V'],
         'mihomo_sha256':hashlib.sha256((root/'etc/openclash/core/clash_meta').read_bytes()).hexdigest(),
         'frp_absent':True,'external_vermagic_absent':True,'unverified_feeds_disabled':True,
         'overclock':'manual UI only; no new startup tuning; runtime untested',
